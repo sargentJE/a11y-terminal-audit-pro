@@ -1,0 +1,55 @@
+{
+  "name": "a11y-terminal-audit-pro",
+  "version": "2.0.0",
+  "description": "Production-grade CLI: deep-crawl a site and run Lighthouse + axe-core + Pa11y accessibility audits with WCAG compliance scoring, multi-format reports, and CI/CD integration.",
+  "type": "module",
+  "bin": {
+    "a11y-audit-pro": "./index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "audit": "node index.js",
+    "lint": "eslint .",
+    "format": "prettier -w ."
+  },
+  "dependencies": {
+    "@axe-core/puppeteer": "^4.11.0",
+    "chrome-launcher": "^1.2.1",
+    "cli-table3": "^0.6.5",
+    "colorette": "^2.0.20",
+    "enquirer": "^2.4.1",
+    "fs-extra": "^11.3.3",
+    "lighthouse": "^13.0.1",
+    "listr2": "^10.1.0",
+    "pa11y": "^9.1.0",
+    "puppeteer": "^24.36.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "globals": "^17.3.0",
+    "prettier": "^3.2.5"
+  },
+  "license": "MIT",
+  "keywords": [
+    "accessibility",
+    "a11y",
+    "lighthouse",
+    "axe",
+    "pa11y",
+    "cli",
+    "crawler",
+    "wcag",
+    "wcag2.1",
+    "wcag2.2",
+    "compliance",
+    "sarif"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://example.com/replace-with-your-repo.git"
+  }
+}
