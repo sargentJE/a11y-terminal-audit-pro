@@ -61,6 +61,7 @@ const Table = cliTablePkg.default || cliTablePkg;
  *  --max-critical <n>       Fail if critical issues exceed threshold
  *  --min-score <n>          Fail if Lighthouse score below threshold
  *  --min-compliance <level> Fail if compliance below A/AA/AAA
+ *  --no-sandbox             Disable Chrome sandbox (for constrained CI only)
  *  --init                   Generate sample config file
  *  --verbose                Enable debug logging
  *  --no-interactive         Error instead of prompting
@@ -70,7 +71,7 @@ function parseArgs(argv) {
   const args = { _: [] };
 
   const booleanFlags = [
-    'details', 'verbose', 'help', 'no-interactive', 'sitemap', 'spa', 'init',
+    'details', 'verbose', 'help', 'no-interactive', 'no-sandbox', 'sitemap', 'spa', 'init',
   ];
 
   for (let i = 0; i < argv.length; i++) {
@@ -115,6 +116,7 @@ ${bold('Basic Options')}
   --standard <name>       WCAG standard (default: WCAG2AA)
   --details               Include full tool outputs in report
   --outDir <dir>          Output directory (default: ./reports)
+  --no-sandbox            Disable Chrome sandbox (CI-only)
   --verbose               Debug logging
   --no-interactive        Do not prompt; error if required inputs missing
   --help                  Show this help
@@ -363,6 +365,9 @@ function formatComplianceBadge(level) {
     outDir: args.outDir,
     formats: args.format ? args.format.split(',').map((f) => f.trim()) : undefined,
     concurrency: args.concurrency ? Number(args.concurrency) : undefined,
+    browser: {
+      noSandbox: args.noSandbox || undefined,
+    },
     crawler: {
       useSitemap: args.sitemap || undefined,
       detectSpaRoutes: args.spa || undefined,
@@ -413,7 +418,9 @@ function formatComplianceBadge(level) {
       {
         title: 'Phase 0: Launching Chrome',
         task: async (ctx) => {
-          ctx.instance = await BrowserManager.create();
+          ctx.instance = await BrowserManager.create({
+            noSandbox: config.browser?.noSandbox === true,
+          });
         },
       },
       {

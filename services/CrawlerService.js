@@ -110,13 +110,18 @@ export class CrawlerService {
         // Always include the start URL first
         const startCanonical = this.#canonicalUrl(start);
         const results = [start];
+        const seen = new Set([startCanonical]);
         
         for (const url of this.sitemapUrls) {
           if (results.length >= this.limit) break;
           const canonical = this.#canonicalUrl(url);
-          if (canonical !== startCanonical) {
-            results.push(url);
-          }
+
+          if (seen.has(canonical)) continue;
+          if (this.#isDisallowed(canonical)) continue;
+          if (!this.#matchesPatterns(canonical)) continue;
+
+          results.push(canonical);
+          seen.add(canonical);
         }
         
         onMsg?.(`Using ${results.length} URLs from sitemap`);

@@ -50,6 +50,11 @@ import { defaultLogger as log } from './Logger.js';
  */
 
 /**
+ * @typedef {Object} BrowserConfig
+ * @property {boolean} [noSandbox] - Disable Chrome sandbox (for constrained CI only)
+ */
+
+/**
  * @typedef {Object} FullConfig
  * @property {string} url - Base URL to audit
  * @property {number} limit - Max pages to crawl
@@ -62,6 +67,7 @@ import { defaultLogger as log } from './Logger.js';
  * @property {AuthConfig} [auth] - Authentication configuration
  * @property {ThresholdConfig} [thresholds] - Pass/fail thresholds
  * @property {CrawlerConfig} [crawler] - Crawler configuration
+ * @property {BrowserConfig} [browser] - Browser launch options
  * @property {boolean} [deduplicateIssues] - Remove duplicate issues across tools
  */
 
@@ -78,6 +84,9 @@ const DEFAULTS = {
   formats: ['json'],
   concurrency: 1,
   deduplicateIssues: true,
+  browser: {
+    noSandbox: false,
+  },
   crawler: {
     useSitemap: true,  // Enabled by default for comprehensive page discovery
     respectRobotsTxt: true,
@@ -265,6 +274,9 @@ export class Config {
       formats: ['json', 'html'],
       concurrency: 3,
       deduplicateIssues: true,
+      browser: {
+        noSandbox: false,
+      },
       crawler: {
         useSitemap: true,
         respectRobotsTxt: true,

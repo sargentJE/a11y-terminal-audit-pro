@@ -40,6 +40,7 @@ export class BrowserManager {
    * @param {object} [opts]
    * @param {string[]} [opts.chromeFlags]
    * @param {string} [opts.chromePath] - Optional explicit Chrome binary path.
+   * @param {boolean} [opts.noSandbox=false] - Disable Chrome sandbox (CI-only).
    * @returns {Promise<BrowserInstance>}
    */
   static async create(opts = {}) {
@@ -50,14 +51,21 @@ export class BrowserManager {
 
     BrowserManager.#installExitHooksOnce();
 
-    const chromeFlags = opts.chromeFlags ?? [
+    const baseChromeFlags = opts.chromeFlags ?? [
       '--headless',
       '--disable-gpu',
-      '--no-sandbox',
       '--disable-dev-shm-usage',
       // Helps reduce some flicker/edge cases in tool automation:
       '--disable-features=RenderDocument',
     ];
+    const chromeFlags = [...baseChromeFlags];
+    const noSandbox = opts.noSandbox === true;
+
+    if (noSandbox) {
+      if (!chromeFlags.includes('--no-sandbox')) chromeFlags.push('--no-sandbox');
+      if (!chromeFlags.includes('--disable-setuid-sandbox')) chromeFlags.push('--disable-setuid-sandbox');
+      log.warn('Chrome sandbox disabled by configuration. Use only in constrained CI environments.');
+    }
 
     log.debug(`Launching Chrome (flags: ${chromeFlags.join(' ')})`);
 

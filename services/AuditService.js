@@ -146,6 +146,7 @@ export class AuditService {
     const retryDelayMs = opts.retryDelayMs ?? 1000;
     const deduplicateIssues = opts.deduplicateIssues ?? true;
     const auth = opts.auth;
+    const toolAuth = AuditService.#buildToolAuthOptions(auth, url);
 
     const result = {
       url,
@@ -200,6 +201,10 @@ export class AuditService {
               onlyCategories: ['accessibility'],
               // Keep Lighthouse from waiting forever on very "chatty" SPAs:
               maxWaitForLoad: timeoutMs,
+              // Keep authenticated cookies/storage for protected-route scans.
+              disableStorageReset: Boolean(auth),
+              // Apply header-based auth consistently across tools.
+              extraHeaders: toolAuth.headers,
             },
             // Config can be customised later; default is fine for now.
             null
@@ -288,6 +293,8 @@ export class AuditService {
             browser: instance.browser,
             timeout: timeoutMs,
             standard,
+            headers: toolAuth.headers,
+            cookies: toolAuth.cookies,
             // We already run axe separately, so we keep Pa11y focused on HTMLCS.
             // (If you want both, set runners: ['htmlcs', 'axe'].)
             runners: ['htmlcs'],
@@ -364,6 +371,51 @@ export class AuditService {
   }
 
   /**
+   * Build auth options that can be shared by Lighthouse and Pa11y.
+   *
+   * @private
+   * @param {AuthConfig|undefined} auth
+   * @param {string} url
+   * @returns {{ headers: Record<string, string>|undefined, cookies: Array<{name: string, value: string, domain?: string, path?: string}>|undefined }}
+   */
+  static #buildToolAuthOptions(auth, url) {
+    if (!auth) {
+      return { headers: undefined, cookies: undefined };
+    }
+
+    const cookies = auth.type === 'cookies'
+      ? AuditService.#normaliseCookies(auth.cookies || [], url)
+      : undefined;
+
+    const headers = auth.type === 'headers' && auth.headers
+      ? auth.headers
+      : undefined;
+
+    return { headers, cookies };
+  }
+
+  /**
+   * Ensure auth cookies include reasonable defaults for domain/path.
+   *
+   * @private
+   * @param {Array<{name: string, value: string, domain?: string, path?: string}>} cookies
+   * @param {string} url
+   * @returns {Array<{name: string, value: string, domain?: string, path?: string}>}
+   */
+  static #normaliseCookies(cookies, url) {
+    if (!Array.isArray(cookies) || cookies.length === 0) return [];
+
+    const urlObj = new URL(url);
+    const defaultDomain = urlObj.hostname;
+
+    return cookies.map((cookie) => ({
+      ...cookie,
+      domain: cookie.domain || defaultDomain,
+      path: cookie.path || '/',
+    }));
+  }
+
+  /**
    * Apply authentication to a page.
    *
    * @private
@@ -377,15 +429,7 @@ export class AuditService {
     switch (type) {
       case 'cookies':
         if (cookies && cookies.length > 0) {
-          // Extract domain from URL if not specified
-          const urlObj = new URL(url);
-          const defaultDomain = urlObj.hostname;
-
-          const cookiesWithDefaults = cookies.map((cookie) => ({
-            ...cookie,
-            domain: cookie.domain || defaultDomain,
-            path: cookie.path || '/',
-          }));
+          const cookiesWithDefaults = AuditService.#normaliseCookies(cookies, url);
 
           await page.setCookie(...cookiesWithDefaults);
           log.debug(`Applied ${cookiesWithDefaults.length} authentication cookies`);
