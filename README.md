@@ -65,7 +65,7 @@ a11y-audit-pro --url https://example.com --limit 10 --format html
 - 🔐 **Authentication Support** — Cookies, headers, or custom Puppeteer login scripts
 - ⚡ **Parallel Execution** — Configurable concurrency for faster audits
 - 🎯 **CI/CD Integration** — Threshold-based exit codes for automated pipelines
-- 📁 **Config Files** — `.a11yrc.json` or `a11y.config.js` for reproducible audits
+- 📁 **Config Files** — `.a11yrc.json`, `a11y.config.js`, or `a11y.config.mjs` for reproducible audits
 - 🔄 **Retry Logic** — Exponential backoff for transient failures
 
 ---
@@ -186,6 +186,7 @@ a11y-terminal-audit-pro/
 | `--standard <name>` | WCAG standard (see below) | `WCAG2AA` |
 | `--details` | Include full tool outputs in report | `false` |
 | `--outDir <dir>` | Output directory | `./reports` |
+| `--no-sandbox` | Disable Chrome sandbox (CI-only) | `false` |
 | `--verbose` | Debug logging | `false` |
 | `--no-interactive` | Do not prompt; error if inputs missing | `false` |
 | `--help` | Show help | — |
@@ -216,8 +217,8 @@ a11y-terminal-audit-pro/
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--sitemap` | Use sitemap.xml for URL discovery | `false` |
-| `--spa` | Enable SPA route detection | `false` |
+| `--sitemap` | Use sitemap.xml for URL discovery | `true` |
+| `--spa` | Enable SPA route detection | `true` |
 
 ### Authentication Options
 
@@ -245,6 +246,7 @@ Exit code `1` if any threshold is exceeded:
 |--------|-------------|
 | `--max-violations <n>` | Fail if total violations exceed threshold |
 | `--max-critical <n>` | Fail if critical issues exceed threshold |
+| `--max-serious <n>` | Fail if serious issues exceed threshold |
 | `--min-score <n>` | Fail if Lighthouse score below threshold (0-100) |
 | `--min-compliance <lvl>` | Fail if compliance below A/AA/AAA |
 
@@ -325,7 +327,7 @@ The compliance score (0-100) is calculated as:
 - Start at 100
 - Deduct 15 points per critical issue
 - Deduct 8 points per serious issue
-- Deduct 4 points per moderate issue
+- Deduct 3 points per moderate issue
 - Deduct 1 point per minor issue
 
 ---
@@ -369,7 +371,7 @@ Lighthouse-style interactive HTML report with:
 - 📈 Severity breakdown by category
 - 🔗 Direct links to WCAG success criteria
 - 🖨️ Print-friendly styling
-- 🌙 Automatic dark mode support
+- 📱 Responsive layout for desktop and mobile review
 
 ### CSV Report
 
@@ -535,7 +537,7 @@ $env:CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
 
 ### Headless Chrome fails in Linux/CI
 
-Install Chrome dependencies. The tool already runs with `--no-sandbox` for CI environments.
+Install Chrome dependencies and enable `--no-sandbox` only when your CI environment requires it.
 
 ```bash
 # Ubuntu/Debian
@@ -593,6 +595,9 @@ npm install
 
 # Run linting
 npm run lint
+
+# Run tests
+npm test
 
 # Format code
 npm run format
