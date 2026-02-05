@@ -4,16 +4,10 @@ import path from 'node:path';
 
 const ROOT = process.cwd();
 const JS_EXT = '.js';
-const TODAY = new Date().toISOString().slice(0, 10);
 
 const SIZE_LIMITS = {
   services: 700,
   utils: 500,
-};
-
-// Temporary allowlist for intentionally large generated/template assets.
-const SIZE_ALLOWLIST = {
-  'utils/report/html/styles.js': '2026-06-30',
 };
 
 /**
@@ -89,10 +83,6 @@ function checkImportBoundaries(relativeFile, content) {
  */
 function checkFileSize(relativeFile, lineCount) {
   const violations = [];
-  const allowUntil = SIZE_ALLOWLIST[relativeFile];
-  if (allowUntil && allowUntil >= TODAY) {
-    return violations;
-  }
 
   if (relativeFile.startsWith('services/') && lineCount > SIZE_LIMITS.services) {
     violations.push(

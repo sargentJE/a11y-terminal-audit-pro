@@ -11,6 +11,7 @@ import { getInputs } from './inputFlow.js';
 import { loadMergedConfig } from './configMerge.js';
 import { printHelp } from './helpText.js';
 import { renderFinalSummary } from './summaryRenderer.js';
+import { collectUnifiedIssues, orderReportResults } from './orderResults.js';
 
 /**
  * Execute the full crawl/audit/report pipeline.
@@ -120,10 +121,6 @@ export async function runPipeline({ args, logger }) {
 
                 report.push(data);
 
-                if (data.unifiedIssues) {
-                  allUnifiedIssues.push(...data.unifiedIssues);
-                }
-
                 const lh = data.lhScore != null ? `${data.lhScore}%` : '—';
                 const axe = data.axeViolations != null ? data.axeViolations : '—';
                 const p11y = data.pa11yIssues != null ? data.pa11yIssues : '—';
@@ -147,6 +144,9 @@ export async function runPipeline({ args, logger }) {
       {
         title: 'Phase 3: Calculating Compliance',
         task: async (ctx) => {
+          const ordered = orderReportResults(report, routes);
+          report.splice(0, report.length, ...ordered);
+          allUnifiedIssues = collectUnifiedIssues(report);
           ctx.compliance = WCAGCompliance.calculate(allUnifiedIssues, inputs.standard);
         },
       },
