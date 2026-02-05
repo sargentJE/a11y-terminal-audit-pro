@@ -68,3 +68,70 @@ test('CSV export neutralizes spreadsheet formula injection vectors', async () =>
     assert.match(dataRow, /'-unsafe/);
   });
 });
+
+test('CSV export includes code evidence columns when available', async () => {
+  await withTempDir(async (dir) => {
+    const report = {
+      meta: {
+        version: '2.0.0',
+        generatedAt: new Date().toISOString(),
+        baseUrl: 'https://example.com',
+        standard: 'WCAG2AA',
+      },
+      compliance: {
+        level: 'A',
+        score: 80,
+        description: 'test',
+      },
+      results: [
+        {
+          url: 'https://example.com',
+          startedAt: new Date().toISOString(),
+          durationMs: 10,
+          lhScore: 100,
+          axeViolations: 0,
+          pa11yIssues: 0,
+          totalIssues: 1,
+          unifiedIssues: [
+            {
+              id: 'issue-2',
+              tool: 'axe',
+              severity: 2,
+              severityLabel: 'serious',
+              message: 'Missing alt text',
+              selector: 'img.hero',
+              html: '<img class="hero">',
+              url: 'https://example.com',
+              wcagCriteria: [{ id: '1.1.1', level: 'A' }],
+              helpUrl: 'https://example.com/help',
+              evidence: {
+                snippet: '<img class="hero">',
+                source: 'dom-runtime',
+                confidence: 'high',
+                locator: {
+                  selector: 'img.hero',
+                  xpath: '/html[1]/body[1]/img[1]',
+                  line: 8,
+                  column: 5,
+                },
+              },
+            },
+          ],
+          errors: {},
+        },
+      ],
+    };
+
+    await ReportGenerator.generate(report, dir, ['csv'], 'evidence-check');
+
+    const csv = await readFile(path.join(dir, 'evidence-check.csv'), 'utf8');
+    const [header, row] = csv.trim().split('\n');
+
+    assert.match(header, /Evidence Snippet/);
+    assert.match(header, /Evidence Source/);
+    assert.match(header, /Evidence Confidence/);
+    assert.match(row, /dom-runtime/);
+    assert.match(row, /high/);
+    assert.match(row, /\/html\[1\]\/body\[1\]\/img\[1\]/);
+  });
+});

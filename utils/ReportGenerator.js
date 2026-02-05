@@ -268,6 +268,10 @@ export class ReportGenerator {
       const wcagTags = (issue.wcagCriteria || [])
         .map((c) => `<span class="lh-tag lh-tag--${c.level?.toLowerCase() || 'unknown'}">${c.id} (${c.level})</span>`)
         .join('');
+      const evidence = issue.evidence;
+      const evidenceLabel = evidence
+        ? `${String(evidence.confidence || 'low').toUpperCase()} • ${evidence.source || 'tool-context'}`
+        : '';
 
       return `
         <details class="lh-audit lh-audit--${issue.severityLabel}" ${index < 3 ? 'open' : ''}>
@@ -289,6 +293,30 @@ export class ReportGenerator {
               <div class="lh-audit__detail">
                 <strong>Element:</strong>
                 <pre class="lh-snippet">${ReportGenerator.#escapeHtml(issue.html)}</pre>
+              </div>
+            ` : ''}
+            ${evidence?.snippet ? `
+              <div class="lh-audit__detail">
+                <strong>Exact Code:</strong>
+                <span class="lh-evidence-badge lh-evidence-badge--${ReportGenerator.#escapeHtml(evidence.confidence || 'low')}">${ReportGenerator.#escapeHtml(evidenceLabel)}</span>
+                <pre class="lh-snippet">${ReportGenerator.#escapeHtml(evidence.snippet)}</pre>
+                ${evidence.contextBefore || evidence.contextAfter ? `
+                  <details class="lh-evidence-context">
+                    <summary>Source context</summary>
+                    ${evidence.contextBefore ? `<pre class="lh-snippet">${ReportGenerator.#escapeHtml(evidence.contextBefore)}</pre>` : ''}
+                    ${evidence.contextAfter ? `<pre class="lh-snippet">${ReportGenerator.#escapeHtml(evidence.contextAfter)}</pre>` : ''}
+                  </details>
+                ` : ''}
+                ${evidence.locator ? `
+                  <div class="lh-evidence-locator">
+                    ${evidence.locator.xpath ? `<span><strong>XPath:</strong> <code class="lh-code">${ReportGenerator.#escapeHtml(evidence.locator.xpath)}</code></span>` : ''}
+                    ${evidence.locator.line ? `<span><strong>Line:</strong> ${ReportGenerator.#escapeHtml(String(evidence.locator.line))}</span>` : ''}
+                    ${evidence.locator.column ? `<span><strong>Column:</strong> ${ReportGenerator.#escapeHtml(String(evidence.locator.column))}</span>` : ''}
+                  </div>
+                ` : ''}
+                ${evidence.captureError ? `
+                  <div class="lh-evidence-note">Evidence note: ${ReportGenerator.#escapeHtml(evidence.captureError)}</div>
+                ` : ''}
               </div>
             ` : ''}
             ${issue.help ? `
@@ -734,6 +762,40 @@ export class ReportGenerator {
     .lh-tag--aaa { background: rgba(236, 72, 153, 0.15); color: #ec4899; }
     .lh-tag--unknown { background: var(--color-bg-secondary); color: var(--color-text-secondary); }
 
+    .lh-evidence-badge {
+      display: inline-block;
+      margin: 0 0 8px 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .lh-evidence-badge--high { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .lh-evidence-badge--medium { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .lh-evidence-badge--low { background: rgba(107, 114, 128, 0.25); color: #6b7280; }
+
+    .lh-evidence-context {
+      margin-top: 8px;
+    }
+
+    .lh-evidence-locator {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--color-text-secondary);
+    }
+
+    .lh-evidence-note {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--color-text-secondary);
+    }
+
     /* Links */
     .lh-link {
       color: var(--color-link);
@@ -1143,6 +1205,12 @@ export class ReportGenerator {
       'WCAG Level',
       'Tool',
       'Help URL',
+      'Evidence Snippet',
+      'Evidence Source',
+      'Evidence Confidence',
+      'Evidence Line',
+      'Evidence Column',
+      'Evidence XPath',
     ];
 
     // Generate CSV rows
@@ -1161,6 +1229,12 @@ export class ReportGenerator {
         wcagLevels,
         issue.tool,
         issue.helpUrl || '',
+        issue.evidence?.snippet || '',
+        issue.evidence?.source || '',
+        issue.evidence?.confidence || '',
+        issue.evidence?.locator?.line ?? '',
+        issue.evidence?.locator?.column ?? '',
+        issue.evidence?.locator?.xpath || '',
       ];
     });
 
@@ -1237,6 +1311,22 @@ export class ReportGenerator {
     // Build SARIF results
     const sarifResults = allIssues.map((issue, _idx) => {
       const ruleId = issue.id.split('-').slice(0, 2).join('-');
+      const region = {};
+      const evidenceLine = issue.evidence?.locator?.line;
+      const evidenceColumn = issue.evidence?.locator?.column;
+      const evidenceSnippet = issue.evidence?.snippet || issue.html;
+
+      if (typeof evidenceLine === 'number' && evidenceLine > 0) {
+        region.startLine = evidenceLine;
+      }
+      if (typeof evidenceColumn === 'number' && evidenceColumn > 0) {
+        region.startColumn = evidenceColumn;
+      }
+      if (evidenceSnippet) {
+        region.snippet = {
+          text: evidenceSnippet,
+        };
+      }
 
       return {
         ruleId,
@@ -1251,6 +1341,7 @@ export class ReportGenerator {
               artifactLocation: {
                 uri: issue.url,
               },
+              ...(Object.keys(region).length > 0 ? { region } : {}),
             },
             logicalLocations: issue.selector
               ? [

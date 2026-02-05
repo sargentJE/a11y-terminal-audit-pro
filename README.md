@@ -250,6 +250,17 @@ Exit code `1` if any threshold is exceeded:
 | `--min-score <n>` | Fail if Lighthouse score below threshold (0-100) |
 | `--min-compliance <lvl>` | Fail if compliance below A/AA/AAA |
 
+### Code Evidence Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--code-evidence` | Enable exact code evidence extraction | `true` |
+| `--no-code-evidence` | Disable code evidence extraction | `false` |
+| `--evidence-context-lines <n>` | Source context lines around snippet | `2` |
+| `--evidence-max-chars <n>` | Max chars per snippet/context field | `2000` |
+| `--evidence-max-ops <n>` | Max selector lookups per page | `500` |
+| `--evidence-timeout <ms>` | Timeout per evidence lookup operation | `1500` |
+
 ---
 
 ## Configuration File
@@ -273,6 +284,13 @@ This creates `.a11yrc.json`:
   "formats": ["json", "html"],
   "concurrency": 3,
   "deduplicateIssues": true,
+  "evidence": {
+    "enabled": true,
+    "contextLines": 2,
+    "maxChars": 2000,
+    "maxOpsPerPage": 500,
+    "timeoutMs": 1500
+  },
   "crawler": {
     "useSitemap": true,
     "respectRobotsTxt": true,
