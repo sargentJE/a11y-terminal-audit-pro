@@ -57,3 +57,19 @@ test('Config.load flags threshold metadata when CLI args provide thresholds', as
     assert.equal(config.__meta.hasUserThresholds, true);
   });
 });
+
+test('Config.load merges evidence defaults with CLI overrides', async () => {
+  await withTempDir(async (dir) => {
+    const config = await Config.load(dir, {
+      evidence: {
+        enabled: false,
+        contextLines: 4,
+      },
+    });
+
+    assert.equal(config.evidence.enabled, false);
+    assert.equal(config.evidence.contextLines, 4);
+    assert.equal(config.evidence.maxChars, 2000);
+    assert.equal(config.evidence.maxOpsPerPage, 500);
+  });
+});

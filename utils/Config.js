@@ -55,6 +55,15 @@ import { defaultLogger as log } from './Logger.js';
  */
 
 /**
+ * @typedef {Object} EvidenceConfig
+ * @property {boolean} [enabled] - Extract per-issue code evidence
+ * @property {number} [contextLines] - Source lines shown around matched snippets
+ * @property {number} [maxChars] - Max chars kept for snippet/context fields
+ * @property {number} [maxOpsPerPage] - Max selector lookup operations per page
+ * @property {number} [timeoutMs] - Timeout per selector/source lookup operation
+ */
+
+/**
  * @typedef {Object} FullConfig
  * @property {string} url - Base URL to audit
  * @property {number} limit - Max pages to crawl
@@ -68,6 +77,7 @@ import { defaultLogger as log } from './Logger.js';
  * @property {ThresholdConfig} [thresholds] - Pass/fail thresholds
  * @property {CrawlerConfig} [crawler] - Crawler configuration
  * @property {BrowserConfig} [browser] - Browser launch options
+ * @property {EvidenceConfig} [evidence] - Issue code evidence extraction options
  * @property {boolean} [deduplicateIssues] - Remove duplicate issues across tools
  */
 
@@ -86,6 +96,13 @@ const DEFAULTS = {
   deduplicateIssues: true,
   browser: {
     noSandbox: false,
+  },
+  evidence: {
+    enabled: true,
+    contextLines: 2,
+    maxChars: 2000,
+    maxOpsPerPage: 500,
+    timeoutMs: 1500,
   },
   crawler: {
     useSitemap: true,  // Enabled by default for comprehensive page discovery
@@ -230,6 +247,21 @@ export class Config {
     if (result.formats && typeof result.formats === 'string') {
       result.formats = [result.formats];
     }
+    if (result.evidence) {
+      result.evidence = { ...result.evidence };
+      if (result.evidence.contextLines !== undefined) {
+        result.evidence.contextLines = Number(result.evidence.contextLines);
+      }
+      if (result.evidence.maxChars !== undefined) {
+        result.evidence.maxChars = Number(result.evidence.maxChars);
+      }
+      if (result.evidence.maxOpsPerPage !== undefined) {
+        result.evidence.maxOpsPerPage = Number(result.evidence.maxOpsPerPage);
+      }
+      if (result.evidence.timeoutMs !== undefined) {
+        result.evidence.timeoutMs = Number(result.evidence.timeoutMs);
+      }
+    }
 
     return result;
   }
@@ -303,6 +335,13 @@ export class Config {
       deduplicateIssues: true,
       browser: {
         noSandbox: false,
+      },
+      evidence: {
+        enabled: true,
+        contextLines: 2,
+        maxChars: 2000,
+        maxOpsPerPage: 500,
+        timeoutMs: 1500,
       },
       crawler: {
         useSitemap: true,

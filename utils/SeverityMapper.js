@@ -20,6 +20,25 @@
  */
 
 /**
+ * @typedef {Object} IssueEvidenceLocator
+ * @property {string|null} [selector] - CSS selector used for lookup
+ * @property {string|null} [xpath] - XPath derived from the runtime DOM
+ * @property {number|null} [line] - Best-effort source line (1-indexed)
+ * @property {number|null} [column] - Best-effort source column (1-indexed)
+ */
+
+/**
+ * @typedef {Object} IssueEvidence
+ * @property {string} snippet - Code snippet tied to this issue
+ * @property {string} [contextBefore] - Optional lines before snippet
+ * @property {string} [contextAfter] - Optional lines after snippet
+ * @property {'dom-runtime'|'response-source'|'tool-context'} source - Where snippet came from
+ * @property {'high'|'medium'|'low'} confidence - Confidence in evidence match
+ * @property {IssueEvidenceLocator} locator - Locator metadata for quick navigation
+ * @property {string} [captureError] - Diagnostic reason when evidence is degraded
+ */
+
+/**
  * @typedef {Object} UnifiedIssue
  * @property {string} id - Unique issue identifier
  * @property {string} tool - Source tool: 'lighthouse' | 'axe' | 'pa11y'
@@ -32,6 +51,7 @@
  * @property {WCAGCriterion[]} wcagCriteria - Related WCAG criteria
  * @property {string} [help] - Help text / remediation guidance
  * @property {string} [helpUrl] - Link to more information
+ * @property {IssueEvidence} [evidence] - Extracted code evidence for this issue
  */
 
 /** Severity level constants */

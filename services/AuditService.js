@@ -21,6 +21,7 @@
 import lighthouse from 'lighthouse';
 import { defaultLogger as log } from '../utils/Logger.js';
 import { SeverityMapper } from '../utils/SeverityMapper.js';
+import { CodeEvidenceExtractor } from '../utils/CodeEvidenceExtractor.js';
 import { pathToFileURL } from 'url';
 
 /** @typedef {{ chrome: any, browser: import('puppeteer').Browser, port: number }} BrowserInstance */
@@ -43,6 +44,12 @@ import { pathToFileURL } from 'url';
  * @property {number} [maxRetries=3] - Maximum retry attempts per tool
  * @property {number} [retryDelayMs=1000] - Base delay for exponential backoff
  * @property {boolean} [deduplicateIssues=true] - Remove duplicate issues across tools
+ * @property {object} [evidence] - Code evidence extraction settings
+ * @property {boolean} [evidence.enabled=true] - Attach code evidence per issue
+ * @property {number} [evidence.contextLines=2] - Source context lines around snippet
+ * @property {number} [evidence.maxChars=2000] - Max characters per evidence field
+ * @property {number} [evidence.maxOpsPerPage=500] - Max DOM lookup ops per page
+ * @property {number} [evidence.timeoutMs=1500] - Timeout for evidence lookup ops
  * @property {AuthConfig} [auth] - Authentication configuration
  */
 
@@ -145,6 +152,13 @@ export class AuditService {
     const maxRetries = opts.maxRetries ?? 3;
     const retryDelayMs = opts.retryDelayMs ?? 1000;
     const deduplicateIssues = opts.deduplicateIssues ?? true;
+    const evidenceOptions = {
+      enabled: opts.evidence?.enabled ?? true,
+      contextLines: opts.evidence?.contextLines ?? 2,
+      maxChars: opts.evidence?.maxChars ?? 2000,
+      maxOpsPerPage: opts.evidence?.maxOpsPerPage ?? 500,
+      timeoutMs: opts.evidence?.timeoutMs ?? 1500,
+    };
     const auth = opts.auth;
     const toolAuth = AuditService.#buildToolAuthOptions(auth, url);
 
@@ -174,6 +188,7 @@ export class AuditService {
     // Always create/close a page we control. This prevents leaks and ensures
     // each audit has a clean environment.
     const page = await instance.browser.newPage();
+    let pageHtml = '';
 
     try {
       // Apply authentication if configured
@@ -252,6 +267,7 @@ export class AuditService {
           // Navigate the Puppeteer page so axe scans the rendered DOM.
           await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
           await page.waitForNetworkIdle({ idleTime: 750, timeout: 10_000 }).catch(() => {});
+          pageHtml = await page.content().catch(() => '');
 
           const axeMod = await import('@axe-core/puppeteer');
           const { AxePuppeteer } = axeMod;
@@ -321,6 +337,25 @@ export class AuditService {
       } catch (err) {
         result.errors.pa11y = { message: err?.message || String(err) };
         log.warn(`Pa11y failed for ${url}: ${err?.message || err}`);
+      }
+
+      if (evidenceOptions.enabled && allIssues.length > 0) {
+        // Ensure we have a page context for selector-based evidence resolution.
+        if (!pageHtml) {
+          try {
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+            await page.waitForNetworkIdle({ idleTime: 750, timeout: 10_000 }).catch(() => {});
+            pageHtml = await page.content().catch(() => '');
+          } catch (error) {
+            log.debug(`Code evidence preload failed for ${url}: ${error?.message || error}`);
+          }
+        }
+
+        allIssues = await CodeEvidenceExtractor.enrichIssues(allIssues, {
+          page,
+          sourceHtml: pageHtml,
+          options: evidenceOptions,
+        });
       }
 
       // Deduplicate issues if enabled
@@ -491,15 +526,80 @@ export class AuditService {
       if (!uniqueIssues.has(key)) {
         uniqueIssues.set(key, issue);
       } else {
-        // Keep the issue with higher severity
+        // Keep the issue with higher severity, while preserving richer evidence.
         const existing = uniqueIssues.get(key);
-        if (issue.severity < existing.severity) {
-          uniqueIssues.set(key, issue);
-        }
+        uniqueIssues.set(key, AuditService.#mergeDuplicateIssuePair(existing, issue));
       }
     }
 
     return Array.from(uniqueIssues.values());
+  }
+
+  /**
+   * Merge two duplicate issues preserving severity precedence and richer evidence.
+   *
+   * @private
+   * @param {UnifiedIssue} a
+   * @param {UnifiedIssue} b
+   * @returns {UnifiedIssue}
+   */
+  static #mergeDuplicateIssuePair(a, b) {
+    const scoreA = AuditService.#issueEvidenceScore(a);
+    const scoreB = AuditService.#issueEvidenceScore(b);
+
+    let primary = a;
+    let secondary = b;
+
+    if (b.severity < a.severity) {
+      primary = b;
+      secondary = a;
+    } else if (a.severity === b.severity && scoreB > scoreA) {
+      primary = b;
+      secondary = a;
+    }
+
+    const primaryWcag = primary.wcagCriteria || [];
+    const secondaryWcag = secondary.wcagCriteria || [];
+    const mergedWcag = [
+      ...primaryWcag,
+      ...secondaryWcag.filter((criterion) => !primaryWcag.some((aCriterion) => aCriterion.id === criterion.id)),
+    ];
+
+    const secondaryEvidenceScore = AuditService.#issueEvidenceScore(secondary);
+    const evidence = secondaryEvidenceScore > AuditService.#issueEvidenceScore(primary)
+      ? secondary.evidence
+      : primary.evidence;
+
+    return {
+      ...primary,
+      wcagCriteria: mergedWcag,
+      help: primary.help || secondary.help,
+      helpUrl: primary.helpUrl || secondary.helpUrl,
+      evidence,
+    };
+  }
+
+  /**
+   * Score issue evidence quality for deduplication merge decisions.
+   *
+   * @private
+   * @param {UnifiedIssue} issue
+   * @returns {number}
+   */
+  static #issueEvidenceScore(issue) {
+    const evidence = issue?.evidence;
+    if (!evidence) return 0;
+
+    const confidenceScore = {
+      high: 3,
+      medium: 2,
+      low: 1,
+    }[evidence.confidence] || 0;
+
+    const snippetScore = evidence.snippet ? 2 : 0;
+    const lineScore = evidence.locator?.line ? 1 : 0;
+
+    return confidenceScore + snippetScore + lineScore;
   }
 }
 

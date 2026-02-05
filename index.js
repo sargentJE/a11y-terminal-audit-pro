@@ -62,6 +62,12 @@ const Table = cliTablePkg.default || cliTablePkg;
  *  --max-serious <n>        Fail if serious issues exceed threshold
  *  --min-score <n>          Fail if Lighthouse score below threshold
  *  --min-compliance <level> Fail if compliance below A/AA/AAA
+ *  --code-evidence          Enable exact code evidence extraction (default on)
+ *  --no-code-evidence       Disable code evidence extraction
+ *  --evidence-context-lines <n> Source context lines for code evidence (default 2)
+ *  --evidence-max-chars <n> Max chars per evidence snippet/context (default 2000)
+ *  --evidence-max-ops <n>   Max selector lookups per page (default 500)
+ *  --evidence-timeout <ms>  Timeout per evidence lookup (default 1500)
  *  --no-sandbox             Disable Chrome sandbox (for constrained CI only)
  *  --init                   Generate sample config file
  *  --verbose                Enable debug logging
@@ -72,7 +78,16 @@ function parseArgs(argv) {
   const args = { _: [] };
 
   const booleanFlags = [
-    'details', 'verbose', 'help', 'no-interactive', 'no-sandbox', 'sitemap', 'spa', 'init',
+    'details',
+    'verbose',
+    'help',
+    'no-interactive',
+    'no-sandbox',
+    'sitemap',
+    'spa',
+    'init',
+    'code-evidence',
+    'no-code-evidence',
   ];
 
   for (let i = 0; i < argv.length; i++) {
@@ -147,6 +162,14 @@ ${bold('CI/CD Threshold Options')} (exit code 1 if threshold exceeded)
   --max-serious <n>       Fail if serious issues exceed threshold
   --min-score <n>         Fail if Lighthouse score below threshold (0-100)
   --min-compliance <lvl>  Fail if compliance level below A/AA/AAA
+
+${bold('Code Evidence Options')}
+  --code-evidence         Enable exact code evidence extraction (default: on)
+  --no-code-evidence      Disable exact code evidence extraction
+  --evidence-context-lines <n>  Source context lines (default: 2)
+  --evidence-max-chars <n>      Max chars per snippet/context (default: 2000)
+  --evidence-max-ops <n>        Max selector lookups per page (default: 500)
+  --evidence-timeout <ms>       Timeout per evidence lookup (default: 1500)
 
 ${bold('Config File')}
   --init                  Generate sample .a11yrc.json config file
@@ -374,6 +397,13 @@ function formatComplianceBadge(level) {
       detectSpaRoutes: args.spa || undefined,
     },
     auth: parseAuthConfig(args),
+    evidence: {
+      enabled: args.noCodeEvidence ? false : args.codeEvidence ? true : undefined,
+      contextLines: args.evidenceContextLines ? Number(args.evidenceContextLines) : undefined,
+      maxChars: args.evidenceMaxChars ? Number(args.evidenceMaxChars) : undefined,
+      maxOpsPerPage: args.evidenceMaxOps ? Number(args.evidenceMaxOps) : undefined,
+      timeoutMs: args.evidenceTimeout ? Number(args.evidenceTimeout) : undefined,
+    },
     thresholds: {
       maxViolations: args.maxViolations ? Number(args.maxViolations) : undefined,
       maxCritical: args.maxCritical ? Number(args.maxCritical) : undefined,
@@ -476,6 +506,7 @@ function formatComplianceBadge(level) {
                   includeDetails: Boolean(config.details),
                   standard: inputs.standard,
                   deduplicateIssues: config.deduplicateIssues ?? true,
+                  evidence: config.evidence,
                   auth: config.auth,
                 });
 
@@ -529,6 +560,7 @@ function formatComplianceBadge(level) {
               includeDetails: Boolean(config.details),
               routesAudited: routes.length,
               concurrency: config.concurrency || 1,
+              evidence: config.evidence,
               formats,
             },
             compliance: ctx.compliance,
