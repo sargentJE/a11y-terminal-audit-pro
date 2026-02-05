@@ -150,27 +150,32 @@ This project is modular and extensible:
 
 ```
 a11y-terminal-audit-pro/
-├── index.js                    # CLI entry point & orchestration
-├── install.sh                  # Global installation script
-├── package.json                # Dependencies & npm config
-├── .a11yrc.json               # Optional config file (generated with --init)
-│
+├── index.js                         # Stable CLI/bin entrypoint
+├── cli/                             # CLI parsing, input flow, orchestration, summary rendering
 ├── services/
-│   ├── AuditService.js        # Multi-tool audit engine with retry logic
-│   └── CrawlerService.js      # Puppeteer crawler with sitemap/SPA support
-│
+│   ├── AuditService.js              # Facade for audit pipeline
+│   ├── CrawlerService.js            # Facade for crawl pipeline
+│   ├── audit/                       # Auth, tool runners, retry, dedupe, evidence internals
+│   └── crawler/                     # Robots/sitemap/spa/extract/queue/filter strategies
 ├── utils/
-│   ├── BrowserManager.js      # Chrome lifecycle management
-│   ├── Config.js              # Config file loader with CLI merge
-│   ├── Logger.js              # Structured logging with levels
-│   ├── Output.js              # File path utilities
-│   ├── ReportGenerator.js     # Multi-format report generation
-│   ├── SeverityMapper.js      # Unified severity + WCAG criteria database
-│   ├── Validation.js          # Input validation helpers
-│   └── WCAGCompliance.js      # A/AA/AAA compliance calculator
-│
-└── reports/                    # Generated reports (gitignored)
+│   ├── ReportGenerator.js           # Facade for report generation
+│   ├── report/                      # JSON/HTML/CSV/SARIF generators + shared template parts
+│   ├── wcag/                        # WCAG datasets, mapping helpers, fingerprinting
+│   ├── BrowserManager.js            # Chrome lifecycle management
+│   ├── Config.js                    # Config loader with CLI merge semantics
+│   ├── SeverityMapper.js            # Public normalization API
+│   └── WCAGCompliance.js            # Compliance calculator + threshold checks
+├── types/                           # Shared JSDoc typedef modules
+├── scripts/check-modularity.js      # Import-boundary + max-file-size guardrail
+└── reports/                         # Generated reports (gitignored)
 ```
+
+### Module Boundary Rules
+
+- `cli` can depend on `services` and `utils`.
+- `services` can depend on `utils`, but not `cli`.
+- `utils` are leaf modules and must not depend on `services`/`cli`.
+- Enforced by `npm run check:modularity`.
 
 ---
 
@@ -643,6 +648,9 @@ npm run lint
 
 # Run tests
 npm test
+
+# Run modularity guardrails
+npm run check:modularity
 
 # Format code
 npm run format
