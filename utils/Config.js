@@ -117,12 +117,23 @@ export class Config {
    */
   static async load(cwd, cliArgs = {}) {
     const fileConfig = await Config.#loadConfigFile(cwd);
+    const hasUserThresholds = Config.#hasUserThresholds(fileConfig, cliArgs);
 
     // Deep merge: defaults <- fileConfig <- cliArgs
     const merged = Config.#deepMerge(
       Config.#deepMerge(DEFAULTS, fileConfig),
       cliArgs
     );
+
+    // Runtime metadata for the CLI flow (kept out of report payloads).
+    Object.defineProperty(merged, '__meta', {
+      value: {
+        hasUserThresholds,
+      },
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
 
     log.debug(`Loaded config: ${JSON.stringify(merged, null, 2)}`);
     return merged;
@@ -255,6 +266,22 @@ export class Config {
     }
 
     return result;
+  }
+
+  /**
+   * Determine whether thresholds were explicitly configured by the user.
+   *
+   * @private
+   * @param {Partial<FullConfig>} fileConfig
+   * @param {Partial<FullConfig>} cliArgs
+   * @returns {boolean}
+   */
+  static #hasUserThresholds(fileConfig, cliArgs) {
+    const keys = ['maxViolations', 'maxCritical', 'maxSerious', 'minScore', 'minCompliance'];
+    const hasAny = (obj) =>
+      keys.some((key) => obj?.thresholds && obj.thresholds[key] !== undefined);
+
+    return hasAny(fileConfig) || hasAny(cliArgs);
   }
 
   /**

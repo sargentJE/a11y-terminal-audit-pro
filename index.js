@@ -59,6 +59,7 @@ const Table = cliTablePkg.default || cliTablePkg;
  *  --login-script <path>    Path to login script module
  *  --max-violations <n>     Fail if total violations exceed threshold
  *  --max-critical <n>       Fail if critical issues exceed threshold
+ *  --max-serious <n>        Fail if serious issues exceed threshold
  *  --min-score <n>          Fail if Lighthouse score below threshold
  *  --min-compliance <level> Fail if compliance below A/AA/AAA
  *  --no-sandbox             Disable Chrome sandbox (for constrained CI only)
@@ -143,6 +144,7 @@ ${bold('Authentication Options')}
 ${bold('CI/CD Threshold Options')} (exit code 1 if threshold exceeded)
   --max-violations <n>    Fail if total violations exceed threshold
   --max-critical <n>      Fail if critical issues exceed threshold
+  --max-serious <n>       Fail if serious issues exceed threshold
   --min-score <n>         Fail if Lighthouse score below threshold (0-100)
   --min-compliance <lvl>  Fail if compliance level below A/AA/AAA
 
@@ -347,7 +349,6 @@ function formatComplianceBadge(level) {
 
   // If the user gives a positional URL, treat it as --url.
   const urlArg = args.url || args._[0];
-  const interactive = !args.noInteractive && !urlArg;
 
   // Verbose mode is opt-in. We keep default output clean and minimal.
   const logger = new Logger({ level: args.verbose ? 'debug' : 'info' });
@@ -376,10 +377,14 @@ function formatComplianceBadge(level) {
     thresholds: {
       maxViolations: args.maxViolations ? Number(args.maxViolations) : undefined,
       maxCritical: args.maxCritical ? Number(args.maxCritical) : undefined,
+      maxSerious: args.maxSerious ? Number(args.maxSerious) : undefined,
       minScore: args.minScore ? Number(args.minScore) : undefined,
       minCompliance: args.minCompliance || undefined,
     },
   });
+
+  // Respect URL from merged config to avoid prompting unnecessarily.
+  const interactive = !args.noInteractive && !config.url;
 
   // Gather validated inputs (and prompt if needed).
   let inputs;
@@ -626,7 +631,7 @@ function formatComplianceBadge(level) {
         console.log(`  ${red('✗')} ${failure}`);
       }
       exitCode = 1;
-    } else if (thresholdResult && Object.keys(config.thresholds || {}).some((k) => config.thresholds[k] !== undefined && config.thresholds[k] !== Infinity)) {
+    } else if (thresholdResult && config.__meta?.hasUserThresholds) {
       console.log('\n' + green(bold('Threshold Check: PASSED')));
     }
 
