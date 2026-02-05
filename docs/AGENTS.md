@@ -6,6 +6,7 @@
 - `services/` contains facade modules plus extracted internals under `services/audit/` and `services/crawler/`.
 - `utils/` contains facades and shared helpers; format-specific report modules live under `utils/report/`, WCAG datasets/helpers under `utils/wcag/`.
 - `types/` holds shared JSDoc typedef modules.
+- `docs/USER_GUIDE.md` is the canonical user-facing guide; other docs should defer to it.
 - `scripts/check-modularity.js` enforces import boundaries and file-size guardrails.
 - `reports/` and `logs/` are output/runtime artifacts; treat them as generated files, not source.
 

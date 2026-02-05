@@ -11,6 +11,8 @@ A production-grade Node.js CLI tool for comprehensive web accessibility testing 
 a11y-audit-pro --url https://example.com --limit 10 --format html
 ```
 
+Canonical user guide: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+
 ---
 
 ## 📋 Table of Contents
