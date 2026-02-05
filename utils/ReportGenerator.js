@@ -33,6 +33,7 @@ import { defaultLogger as log } from './Logger.js';
  * @property {Object} [lighthouse]
  * @property {Object} [axe]
  * @property {Object} [pa11y]
+ * @property {Object} [evidenceSummary]
  * @property {Object} errors
  */
 
@@ -53,6 +54,7 @@ export class ReportGenerator {
    * @param {string} baseFilename - Base filename without extension
    * @param {Object} [options] - Additional options
    * @param {boolean} [options.openHtml=false] - Auto-open HTML report in browser
+   * @param {boolean} [options.csvLegacy=false] - Emit legacy CSV schema without evidence columns
    * @returns {Promise<string[]>} - Paths to generated files
    */
   static async generate(data, outDir, formats, baseFilename, options = {}) {
@@ -72,7 +74,9 @@ export class ReportGenerator {
           htmlPath = filepath;
           break;
         case 'csv':
-          await ReportGenerator.#generateCsv(data, filepath);
+          await ReportGenerator.#generateCsv(data, filepath, {
+            csvLegacy: options.csvLegacy === true,
+          });
           break;
         case 'sarif':
           await ReportGenerator.#generateSarif(data, filepath);
@@ -1186,15 +1190,17 @@ export class ReportGenerator {
    * @private
    * @param {ReportData} data
    * @param {string} filepath
+   * @param {{ csvLegacy?: boolean }} [options]
    */
-  static async #generateCsv(data, filepath) {
+  static async #generateCsv(data, filepath, options = {}) {
     const { results } = data;
+    const csvLegacy = options.csvLegacy === true;
 
     // Collect all unified issues
     const allIssues = results.flatMap((r) => r.unifiedIssues || []);
 
     // CSV headers
-    const headers = [
+    const baseHeaders = [
       'Severity',
       'Severity Level',
       'Message',
@@ -1205,6 +1211,9 @@ export class ReportGenerator {
       'WCAG Level',
       'Tool',
       'Help URL',
+    ];
+
+    const evidenceHeaders = [
       'Evidence Snippet',
       'Evidence Source',
       'Evidence Confidence',
@@ -1212,13 +1221,14 @@ export class ReportGenerator {
       'Evidence Column',
       'Evidence XPath',
     ];
+    const headers = csvLegacy ? baseHeaders : [...baseHeaders, ...evidenceHeaders];
 
     // Generate CSV rows
     const rows = allIssues.map((issue) => {
       const wcagCriteria = (issue.wcagCriteria || []).map((c) => c.id).join('; ');
       const wcagLevels = [...new Set((issue.wcagCriteria || []).map((c) => c.level))].join('; ');
 
-      return [
+      const baseRow = [
         issue.severityLabel,
         issue.severity,
         issue.message,
@@ -1229,6 +1239,14 @@ export class ReportGenerator {
         wcagLevels,
         issue.tool,
         issue.helpUrl || '',
+      ];
+
+      if (csvLegacy) {
+        return baseRow;
+      }
+
+      return [
+        ...baseRow,
         issue.evidence?.snippet || '',
         issue.evidence?.source || '',
         issue.evidence?.confidence || '',

@@ -73,3 +73,17 @@ test('Config.load merges evidence defaults with CLI overrides', async () => {
     assert.equal(config.evidence.maxOpsPerPage, 500);
   });
 });
+
+test('Config.load supports report.csvLegacy overrides and defaults', async () => {
+  await withTempDir(async (dir) => {
+    const configDefault = await Config.load(dir, {});
+    assert.equal(configDefault.report.csvLegacy, false);
+
+    const configOverride = await Config.load(dir, {
+      report: {
+        csvLegacy: true,
+      },
+    });
+    assert.equal(configOverride.report.csvLegacy, true);
+  });
+});

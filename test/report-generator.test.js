@@ -135,3 +135,65 @@ test('CSV export includes code evidence columns when available', async () => {
     assert.match(row, /\/html\[1\]\/body\[1\]\/img\[1\]/);
   });
 });
+
+test('CSV legacy mode omits evidence columns', async () => {
+  await withTempDir(async (dir) => {
+    const report = {
+      meta: {
+        version: '2.0.0',
+        generatedAt: new Date().toISOString(),
+        baseUrl: 'https://example.com',
+        standard: 'WCAG2AA',
+      },
+      compliance: {
+        level: 'A',
+        score: 80,
+        description: 'test',
+      },
+      results: [
+        {
+          url: 'https://example.com',
+          startedAt: new Date().toISOString(),
+          durationMs: 10,
+          lhScore: 100,
+          axeViolations: 0,
+          pa11yIssues: 0,
+          totalIssues: 1,
+          unifiedIssues: [
+            {
+              id: 'issue-3',
+              tool: 'axe',
+              severity: 2,
+              severityLabel: 'serious',
+              message: 'Missing alt text',
+              selector: 'img.hero',
+              html: '<img class="hero">',
+              url: 'https://example.com',
+              wcagCriteria: [{ id: '1.1.1', level: 'A' }],
+              helpUrl: 'https://example.com/help',
+              evidence: {
+                snippet: '<img class="hero">',
+                source: 'dom-runtime',
+                confidence: 'high',
+                locator: {
+                  xpath: '/html[1]/body[1]/img[1]',
+                  line: 8,
+                  column: 5,
+                },
+              },
+            },
+          ],
+          errors: {},
+        },
+      ],
+    };
+
+    await ReportGenerator.generate(report, dir, ['csv'], 'legacy-check', { csvLegacy: true });
+    const csv = await readFile(path.join(dir, 'legacy-check.csv'), 'utf8');
+    const [header] = csv.trim().split('\n');
+
+    assert.doesNotMatch(header, /Evidence Snippet/);
+    assert.doesNotMatch(header, /Evidence Source/);
+    assert.doesNotMatch(header, /Evidence Confidence/);
+  });
+});

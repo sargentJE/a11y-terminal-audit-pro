@@ -198,6 +198,7 @@ a11y-terminal-audit-pro/
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--format <formats>` | Output formats (comma-separated) | `json` |
+| `--csv-legacy` | Use legacy CSV schema without evidence columns | `false` |
 
 **Supported formats**:
 - `json` — Structured JSON with full issue details
@@ -282,6 +283,9 @@ This creates `.a11yrc.json`:
   "details": true,
   "outDir": "./reports",
   "formats": ["json", "html"],
+  "report": {
+    "csvLegacy": false
+  },
   "concurrency": 3,
   "deduplicateIssues": true,
   "evidence": {
@@ -363,7 +367,16 @@ Structured report with full issue details, compliance scoring, and metadata.
     "version": "2.0.0",
     "generatedAt": "2024-01-15T10:30:00Z",
     "baseUrl": "https://example.com",
-    "standard": "WCAG2AA"
+    "standard": "WCAG2AA",
+    "evidenceSummary": {
+      "enabled": true,
+      "totalIssues": 12,
+      "high": 9,
+      "medium": 2,
+      "low": 1,
+      "unresolved": 1,
+      "extractionMs": 420
+    }
   },
   "compliance": {
     "level": "AA",
@@ -377,7 +390,21 @@ Structured report with full issue details, compliance scoring, and metadata.
       "minor": 3
     }
   },
-  "results": [...]
+  "results": [
+    {
+      "unifiedIssues": [
+        {
+          "id": "axe-link-name-0",
+          "stableFingerprint": "2e3c7d44b47a6a96d3138f8a",
+          "evidence": {
+            "source": "dom-runtime",
+            "confidence": "high",
+            "snippet": "<a href=\"/\">Learn more</a>"
+          }
+        }
+      ]
+    }
+  ]
 }
 ```
 

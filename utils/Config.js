@@ -64,6 +64,11 @@ import { defaultLogger as log } from './Logger.js';
  */
 
 /**
+ * @typedef {Object} ReportConfig
+ * @property {boolean} [csvLegacy] - Use legacy CSV schema without evidence columns
+ */
+
+/**
  * @typedef {Object} FullConfig
  * @property {string} url - Base URL to audit
  * @property {number} limit - Max pages to crawl
@@ -78,6 +83,7 @@ import { defaultLogger as log } from './Logger.js';
  * @property {CrawlerConfig} [crawler] - Crawler configuration
  * @property {BrowserConfig} [browser] - Browser launch options
  * @property {EvidenceConfig} [evidence] - Issue code evidence extraction options
+ * @property {ReportConfig} [report] - Report generation options
  * @property {boolean} [deduplicateIssues] - Remove duplicate issues across tools
  */
 
@@ -103,6 +109,9 @@ const DEFAULTS = {
     maxChars: 2000,
     maxOpsPerPage: 500,
     timeoutMs: 1500,
+  },
+  report: {
+    csvLegacy: false,
   },
   crawler: {
     useSitemap: true,  // Enabled by default for comprehensive page discovery
@@ -262,6 +271,16 @@ export class Config {
         result.evidence.timeoutMs = Number(result.evidence.timeoutMs);
       }
     }
+    if (result.report) {
+      result.report = { ...result.report };
+      if (result.report.csvLegacy !== undefined) {
+        if (typeof result.report.csvLegacy === 'string') {
+          result.report.csvLegacy = result.report.csvLegacy.toLowerCase() === 'true';
+        } else {
+          result.report.csvLegacy = Boolean(result.report.csvLegacy);
+        }
+      }
+    }
 
     return result;
   }
@@ -342,6 +361,9 @@ export class Config {
         maxChars: 2000,
         maxOpsPerPage: 500,
         timeoutMs: 1500,
+      },
+      report: {
+        csvLegacy: false,
       },
       crawler: {
         useSitemap: true,

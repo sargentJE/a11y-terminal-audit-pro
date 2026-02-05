@@ -51,6 +51,7 @@ const Table = cliTablePkg.default || cliTablePkg;
  *  --details                Include full tool results in output
  *  --outDir <dir>           Report directory (default ./reports)
  *  --format <formats>       Output formats: json,html,csv,sarif (default json)
+ *  --csv-legacy             Emit legacy CSV schema (without evidence columns)
  *  --concurrency <n>        Parallel audit workers (default 1)
  *  --sitemap                Use sitemap.xml for URL discovery
  *  --spa                    Enable SPA route detection
@@ -88,6 +89,7 @@ function parseArgs(argv) {
     'init',
     'code-evidence',
     'no-code-evidence',
+    'csv-legacy',
   ];
 
   for (let i = 0; i < argv.length; i++) {
@@ -140,6 +142,7 @@ ${bold('Basic Options')}
 ${bold('Report Options')}
   --format <formats>      Output formats, comma-separated (default: json)
                           Supported: json, html, csv, sarif
+  --csv-legacy            Emit legacy CSV schema (without evidence columns)
 
 ${bold('Performance Options')}
   --concurrency <n>       Parallel audit workers (default: 1)
@@ -404,6 +407,9 @@ function formatComplianceBadge(level) {
       maxOpsPerPage: args.evidenceMaxOps ? Number(args.evidenceMaxOps) : undefined,
       timeoutMs: args.evidenceTimeout ? Number(args.evidenceTimeout) : undefined,
     },
+    report: {
+      csvLegacy: args.csvLegacy || undefined,
+    },
     thresholds: {
       maxViolations: args.maxViolations ? Number(args.maxViolations) : undefined,
       maxCritical: args.maxCritical ? Number(args.maxCritical) : undefined,
@@ -547,6 +553,29 @@ function formatComplianceBadge(level) {
         title: 'Phase 4: Exporting Reports',
         task: async (ctx) => {
           const avgLhScore = report.reduce((sum, r) => sum + (r.lhScore || 0), 0) / report.length;
+          const aggregatedEvidenceSummary = report.reduce(
+            (acc, row) => {
+              const summary = row.evidenceSummary;
+              if (!summary) return acc;
+
+              acc.totalIssues += summary.totalIssues || 0;
+              acc.high += summary.high || 0;
+              acc.medium += summary.medium || 0;
+              acc.low += summary.low || 0;
+              acc.unresolved += summary.unresolved || 0;
+              acc.extractionMs += summary.extractionMs || 0;
+              return acc;
+            },
+            {
+              enabled: config.evidence?.enabled ?? true,
+              totalIssues: 0,
+              high: 0,
+              medium: 0,
+              low: 0,
+              unresolved: 0,
+              extractionMs: 0,
+            }
+          );
 
           const payload = {
             meta: {
@@ -561,6 +590,10 @@ function formatComplianceBadge(level) {
               routesAudited: routes.length,
               concurrency: config.concurrency || 1,
               evidence: config.evidence,
+              evidenceSummary: aggregatedEvidenceSummary,
+              report: {
+                csvLegacy: config.report?.csvLegacy === true,
+              },
               formats,
             },
             compliance: ctx.compliance,
@@ -575,8 +608,12 @@ function formatComplianceBadge(level) {
             outDir,
             formats,
             baseFilename,
-            { openHtml: shouldOpenHtml }
+            {
+              openHtml: shouldOpenHtml,
+              csvLegacy: config.report?.csvLegacy === true,
+            }
           );
+          ctx.evidenceSummary = aggregatedEvidenceSummary;
 
           // Check thresholds
           ctx.thresholdResult = WCAGCompliance.checkThresholds(
@@ -652,6 +689,22 @@ function formatComplianceBadge(level) {
       }
       if (compliance.wcagSummary.failedAA.length > 5) {
         console.log(`    ... and ${compliance.wcagSummary.failedAA.length - 5} more`);
+      }
+    }
+
+    if (ctx.evidenceSummary) {
+      const evidenceSummary = ctx.evidenceSummary;
+      if (evidenceSummary.enabled) {
+        console.log('\n' + bold('Code Evidence Summary'));
+        console.log('─'.repeat(50));
+        console.log(`  Coverage: ${evidenceSummary.totalIssues > 0 ? Math.round(((evidenceSummary.high + evidenceSummary.medium + evidenceSummary.low) / evidenceSummary.totalIssues) * 100) : 0}%`);
+        console.log(`  High confidence:   ${evidenceSummary.high}`);
+        console.log(`  Medium confidence: ${evidenceSummary.medium}`);
+        console.log(`  Low confidence:    ${evidenceSummary.low}`);
+        console.log(`  Unresolved:        ${evidenceSummary.unresolved}`);
+        console.log(`  Extraction time:   ${Math.round((evidenceSummary.extractionMs || 0) / 1000)}s`);
+      } else {
+        console.log('\n' + gray('Code Evidence Summary: disabled'));
       }
     }
 
