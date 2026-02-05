@@ -1,138 +1,22 @@
 /**
  * services/AuditService.js
  * -----------------------------------------------------------------------------
- * Enhanced audit engine that aggregates:
- * - Lighthouse (Accessibility category)
- * - axe-core (via @axe-core/puppeteer)
- * - Pa11y (HTMLCS runner by default)
- *
- * Features:
- * - Retry logic with exponential backoff for transient failures
- * - Parallel audit execution with configurable concurrency
- * - Issue deduplication across tools
- * - Authentication support (cookies, headers, login scripts)
- * - Unified severity scoring and WCAG criteria mapping
- *
- * Output design:
- * - The terminal UI needs *summary metrics* for quick scanning.
- * - The exported JSON should contain enough detail to build dashboards later.
+ * Facade service that orchestrates Lighthouse + axe + Pa11y audits.
  */
 
-import lighthouse from 'lighthouse';
 import { defaultLogger as log } from '../utils/Logger.js';
 import { SeverityMapper } from '../utils/SeverityMapper.js';
 import { CodeEvidenceExtractor } from '../utils/CodeEvidenceExtractor.js';
-import { pathToFileURL } from 'url';
+import { applyAuthentication } from './audit/auth/applyAuth.js';
+import { buildToolAuthOptions } from './audit/auth/toolAuthOptions.js';
+import { deduplicateIssues } from './audit/dedupe/issueDedupe.js';
+import { summarizeEvidence } from './audit/evidence/evidenceSummary.js';
+import { runLighthouseAudit } from './audit/toolRunners/lighthouseRunner.js';
+import { runAxeAudit } from './audit/toolRunners/axeRunner.js';
+import { runPa11yAudit } from './audit/toolRunners/pa11yRunner.js';
 
 /** @typedef {{ chrome: any, browser: import('puppeteer').Browser, port: number }} BrowserInstance */
 /** @typedef {import('../utils/SeverityMapper.js').UnifiedIssue} UnifiedIssue */
-
-/**
- * @typedef {object} AuthConfig
- * @property {string} [type] - 'cookies' | 'headers' | 'login-script'
- * @property {Array<{name: string, value: string, domain?: string, path?: string}>} [cookies]
- * @property {Record<string, string>} [headers]
- * @property {string} [loginScript] - Path to login script module
- * @property {Object} [loginCredentials] - Credentials passed to login script
- */
-
-/**
- * @typedef {object} AuditOptions
- * @property {number} [timeoutMs=60000]
- * @property {boolean} [includeDetails=false] - Include full issue lists in JSON.
- * @property {'WCAG2A'|'WCAG2AA'|'WCAG2AAA'|'WCAG21A'|'WCAG21AA'|'WCAG21AAA'|'WCAG22AA'} [standard='WCAG2AA']
- * @property {number} [maxRetries=3] - Maximum retry attempts per tool
- * @property {number} [retryDelayMs=1000] - Base delay for exponential backoff
- * @property {boolean} [deduplicateIssues=true] - Remove duplicate issues across tools
- * @property {object} [evidence] - Code evidence extraction settings
- * @property {boolean} [evidence.enabled=true] - Attach code evidence per issue
- * @property {number} [evidence.contextLines=2] - Source context lines around snippet
- * @property {number} [evidence.maxChars=2000] - Max characters per evidence field
- * @property {number} [evidence.maxOpsPerPage=500] - Max DOM lookup ops per page
- * @property {number} [evidence.timeoutMs=1500] - Timeout for evidence lookup ops
- * @property {AuthConfig} [auth] - Authentication configuration
- */
-
-/**
- * Minimal, JSON-friendly shape for a single axe violation.
- * (The raw axe output can be huge.)
- *
- * @param {any} v
- * @param {number} maxNodes
- */
-function reduceAxeViolation(v, maxNodes = 5) {
-  return {
-    id: v.id,
-    impact: v.impact || null,
-    description: v.description,
-    help: v.help,
-    helpUrl: v.helpUrl,
-    tags: v.tags || [],
-    nodes: (v.nodes || []).slice(0, maxNodes).map((n) => ({
-      // `target` is an array of selectors.
-      target: n.target,
-      html: n.html,
-      failureSummary: n.failureSummary || null,
-    })),
-  };
-}
-
-/**
- * Minimal, JSON-friendly shape for a single Pa11y issue.
- *
- * @param {any} i
- */
-function reducePa11yIssue(i) {
-  return {
-    code: i.code,
-    type: i.type,
-    typeCode: i.typeCode,
-    message: i.message,
-    selector: i.selector || null,
-    context: i.context || null,
-    runner: i.runner || null,
-  };
-}
-
-/**
- * Sleep helper for retry delays.
- *
- * @param {number} ms
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Execute a function with retry logic and exponential backoff.
- *
- * @template T
- * @param {() => Promise<T>} fn - Function to execute
- * @param {number} maxRetries - Maximum number of retries
- * @param {number} baseDelay - Base delay in ms (doubles each retry)
- * @param {string} operationName - Name for logging
- * @returns {Promise<T>}
- */
-async function withRetry(fn, maxRetries, baseDelay, operationName) {
-  let lastError;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err;
-
-      if (attempt < maxRetries) {
-        const delay = baseDelay * Math.pow(2, attempt);
-        log.debug(`${operationName} failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms...`);
-        await sleep(delay);
-      }
-    }
-  }
-
-  throw lastError;
-}
 
 export class AuditService {
   /**
@@ -140,7 +24,7 @@ export class AuditService {
    *
    * @param {string} url
    * @param {BrowserInstance} instance
-   * @param {AuditOptions} [opts]
+   * @param {object} [opts]
    */
   static async run(url, instance, opts = {}) {
     const startedAt = new Date().toISOString();
@@ -151,7 +35,7 @@ export class AuditService {
     const standard = opts.standard ?? 'WCAG2AA';
     const maxRetries = opts.maxRetries ?? 3;
     const retryDelayMs = opts.retryDelayMs ?? 1000;
-    const deduplicateIssues = opts.deduplicateIssues ?? true;
+    const shouldDeduplicate = opts.deduplicateIssues ?? true;
     const evidenceOptions = {
       enabled: opts.evidence?.enabled ?? true,
       contextLines: opts.evidence?.contextLines ?? 2,
@@ -160,189 +44,100 @@ export class AuditService {
       timeoutMs: opts.evidence?.timeoutMs ?? 1500,
     };
     const auth = opts.auth;
-    const toolAuth = AuditService.#buildToolAuthOptions(auth, url);
+    const toolAuth = buildToolAuthOptions(auth, url);
 
     const result = {
       url,
       startedAt,
       durationMs: 0,
-
-      // Summary for TUI table:
       lhScore: null,
       axeViolations: null,
       pa11yIssues: null,
-
-      // Unified issues with WCAG mapping
       unifiedIssues: [],
       totalIssues: 0,
       evidenceSummary: null,
-
-      // Detailed sections for exported JSON:
       lighthouse: null,
       axe: null,
       pa11y: null,
-
-      // If any tool fails, we still return a result with error details.
       errors: {},
     };
 
-    // Always create/close a page we control. This prevents leaks and ensures
-    // each audit has a clean environment.
     const page = await instance.browser.newPage();
     let pageHtml = '';
 
     try {
-      // Apply authentication if configured
       if (auth) {
-        await AuditService.#applyAuthentication(page, auth, url);
+        await applyAuthentication(page, auth, url, log);
       }
 
-      // Collect all unified issues
       /** @type {UnifiedIssue[]} */
       let allIssues = [];
       let evidenceExtractionMs = 0;
 
-      // ---------------------------------------------------------------------
-      // 1) Lighthouse (Accessibility)
-      // ---------------------------------------------------------------------
       try {
-        await withRetry(async () => {
-          // Lighthouse drives Chrome via the debugging port. It does not require
-          // the Puppeteer page above, but sharing the SAME Chrome instance keeps
-          // memory use low and avoids extra processes.
-          const lhRunner = await lighthouse(
-            url,
-            {
-              port: instance.port,
-              logLevel: 'silent',
-              onlyCategories: ['accessibility'],
-              // Keep Lighthouse from waiting forever on very "chatty" SPAs:
-              maxWaitForLoad: timeoutMs,
-              // Keep authenticated cookies/storage for protected-route scans.
-              disableStorageReset: Boolean(auth),
-              // Apply header-based auth consistently across tools.
-              extraHeaders: toolAuth.headers,
-            },
-            // Config can be customised later; default is fine for now.
-            null
-          );
+        const lighthouseResult = await runLighthouseAudit({
+          url,
+          instance,
+          timeoutMs,
+          includeDetails,
+          headers: toolAuth.headers,
+          hasAuth: Boolean(auth),
+          maxRetries,
+          retryDelayMs,
+          log,
+        });
 
-          const lhr = lhRunner?.lhr;
-          const score = lhr?.categories?.accessibility?.score;
-
-          result.lhScore = typeof score === 'number' ? Math.round(score * 100) : null;
-
-          // Normalize Lighthouse issues to unified format
-          const failingAudits = Object.entries(lhr?.audits || {})
-            .filter(([, a]) => typeof a?.score === 'number' && a.score < 1)
-            .map(([id, a]) => ({ id, ...a }));
-
-          for (const audit of failingAudits) {
-            const normalized = SeverityMapper.normalizeLighthouseAudit(audit, url);
-            allIssues.push(...normalized);
-          }
-
-          // Keep the exported JSON reasonably sized:
-          result.lighthouse = includeDetails
-            ? { score: result.lhScore, lhr }
-            : {
-                score: result.lhScore,
-                // Include just failing audits (score < 1) as an actionable summary.
-                failingAudits: failingAudits.map((a) => ({
-                  id: a.id,
-                  title: a.title,
-                  description: a.description,
-                  score: a.score,
-                })),
-              };
-        }, maxRetries, retryDelayMs, `Lighthouse audit for ${url}`);
+        result.lhScore = lighthouseResult.lhScore;
+        result.lighthouse = lighthouseResult.lighthouse;
+        allIssues.push(...lighthouseResult.issues);
       } catch (err) {
         result.errors.lighthouse = { message: err?.message || String(err) };
         log.warn(`Lighthouse failed for ${url}: ${err?.message || err}`);
       }
 
-      // ---------------------------------------------------------------------
-      // 2) axe-core (via Puppeteer)
-      // ---------------------------------------------------------------------
       try {
-        await withRetry(async () => {
-          // Navigate the Puppeteer page so axe scans the rendered DOM.
-          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-          await page.waitForNetworkIdle({ idleTime: 750, timeout: 10_000 }).catch(() => {});
-          pageHtml = await page.content().catch(() => '');
+        const axeResult = await runAxeAudit({
+          url,
+          page,
+          timeoutMs,
+          includeDetails,
+          maxRetries,
+          retryDelayMs,
+          log,
+        });
 
-          const axeMod = await import('@axe-core/puppeteer');
-          const { AxePuppeteer } = axeMod;
-
-          const axeResults = await new AxePuppeteer(page).analyze();
-
-          const violations = axeResults?.violations || [];
-          result.axeViolations = violations.length;
-
-          // Normalize axe violations to unified format
-          for (const violation of violations) {
-            const normalized = SeverityMapper.normalizeAxeViolation(violation, url);
-            allIssues.push(...normalized);
-          }
-
-          result.axe = includeDetails
-            ? axeResults
-            : {
-                violationsCount: violations.length,
-                violations: violations.map((v) => reduceAxeViolation(v)),
-              };
-        }, maxRetries, retryDelayMs, `axe audit for ${url}`);
+        result.axeViolations = axeResult.axeViolations;
+        result.axe = axeResult.axe;
+        pageHtml = axeResult.pageHtml;
+        allIssues.push(...axeResult.issues);
       } catch (err) {
         result.errors.axe = { message: err?.message || String(err) };
         log.warn(`axe failed for ${url}: ${err?.message || err}`);
       }
 
-      // ---------------------------------------------------------------------
-      // 3) Pa11y (HTMLCS by default)
-      // ---------------------------------------------------------------------
       try {
-        await withRetry(async () => {
-          const pa11yMod = await import('pa11y');
-          const pa11y = pa11yMod.default || pa11yMod;
+        const pa11yResult = await runPa11yAudit({
+          url,
+          instance,
+          timeoutMs,
+          standard,
+          includeDetails,
+          headers: toolAuth.headers,
+          cookies: toolAuth.cookies,
+          maxRetries,
+          retryDelayMs,
+          log,
+        });
 
-          // Pa11y can reuse an existing Puppeteer browser instance. This avoids
-          // launching yet another Chromium process per URL.
-          const pa11yResults = await pa11y(url, {
-            browser: instance.browser,
-            timeout: timeoutMs,
-            standard,
-            headers: toolAuth.headers,
-            cookies: toolAuth.cookies,
-            // We already run axe separately, so we keep Pa11y focused on HTMLCS.
-            // (If you want both, set runners: ['htmlcs', 'axe'].)
-            runners: ['htmlcs'],
-            includeNotices: false,
-            includeWarnings: true,
-          });
-
-          const issues = pa11yResults?.issues || [];
-          result.pa11yIssues = issues.length;
-
-          // Normalize Pa11y issues to unified format
-          for (const issue of issues) {
-            const normalized = SeverityMapper.normalizePa11yIssue(issue, url);
-            allIssues.push(normalized);
-          }
-
-          result.pa11y = includeDetails
-            ? pa11yResults
-            : {
-                issuesCount: issues.length,
-                issues: issues.slice(0, 200).map(reducePa11yIssue),
-              };
-        }, maxRetries, retryDelayMs, `Pa11y audit for ${url}`);
+        result.pa11yIssues = pa11yResult.pa11yIssues;
+        result.pa11y = pa11yResult.pa11y;
+        allIssues.push(...pa11yResult.issues);
       } catch (err) {
         result.errors.pa11y = { message: err?.message || String(err) };
         log.warn(`Pa11y failed for ${url}: ${err?.message || err}`);
       }
 
       if (allIssues.length > 0) {
-        // Ensure we have a page context for selector-based evidence resolution.
         if (evidenceOptions.enabled && !pageHtml) {
           try {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
@@ -362,21 +157,19 @@ export class AuditService {
         evidenceExtractionMs = enrichment.summary.extractionMs;
       }
 
-      // Deduplicate issues if enabled
-      if (deduplicateIssues) {
-        allIssues = AuditService.#deduplicateIssues(allIssues);
+      if (shouldDeduplicate) {
+        allIssues = deduplicateIssues(allIssues);
       }
 
       allIssues = allIssues.map((issue) => SeverityMapper.withStableFingerprint(issue));
 
       result.unifiedIssues = allIssues;
       result.totalIssues = allIssues.length;
-      result.evidenceSummary = AuditService.#summarizeEvidence(
+      result.evidenceSummary = summarizeEvidence(
         allIssues,
         evidenceOptions.enabled,
         evidenceExtractionMs
       );
-
     } finally {
       await page.close().catch(() => {});
       result.durationMs = Date.now() - t0;
@@ -388,17 +181,16 @@ export class AuditService {
   /**
    * Run audits for multiple URLs with configurable concurrency.
    *
-   * @param {string[]} urls - URLs to audit
+   * @param {string[]} urls
    * @param {BrowserInstance} instance
-   * @param {AuditOptions & { concurrency?: number }} [opts]
+   * @param {object} [opts]
    * @param {(progress: { completed: number, total: number, url: string }) => void} [onProgress]
-   * @returns {Promise<Array<ReturnType<typeof AuditService.run>>>}
+   * @returns {Promise<Array<Awaited<ReturnType<typeof AuditService.run>>>>}
    */
   static async runBatch(urls, instance, opts = {}, onProgress) {
     const concurrency = opts.concurrency ?? 1;
     const results = [];
 
-    // Process URLs in batches based on concurrency
     for (let i = 0; i < urls.length; i += concurrency) {
       const batch = urls.slice(i, i + concurrency);
 
@@ -414,239 +206,6 @@ export class AuditService {
     }
 
     return results;
-  }
-
-  /**
-   * Build auth options that can be shared by Lighthouse and Pa11y.
-   *
-   * @private
-   * @param {AuthConfig|undefined} auth
-   * @param {string} url
-   * @returns {{ headers: Record<string, string>|undefined, cookies: Array<{name: string, value: string, domain?: string, path?: string}>|undefined }}
-   */
-  static #buildToolAuthOptions(auth, url) {
-    if (!auth) {
-      return { headers: undefined, cookies: undefined };
-    }
-
-    const cookies = auth.type === 'cookies'
-      ? AuditService.#normaliseCookies(auth.cookies || [], url)
-      : undefined;
-
-    const headers = auth.type === 'headers' && auth.headers
-      ? auth.headers
-      : undefined;
-
-    return { headers, cookies };
-  }
-
-  /**
-   * Ensure auth cookies include reasonable defaults for domain/path.
-   *
-   * @private
-   * @param {Array<{name: string, value: string, domain?: string, path?: string}>} cookies
-   * @param {string} url
-   * @returns {Array<{name: string, value: string, domain?: string, path?: string}>}
-   */
-  static #normaliseCookies(cookies, url) {
-    if (!Array.isArray(cookies) || cookies.length === 0) return [];
-
-    const urlObj = new URL(url);
-    const defaultDomain = urlObj.hostname;
-
-    return cookies.map((cookie) => ({
-      ...cookie,
-      domain: cookie.domain || defaultDomain,
-      path: cookie.path || '/',
-    }));
-  }
-
-  /**
-   * Apply authentication to a page.
-   *
-   * @private
-   * @param {import('puppeteer').Page} page
-   * @param {AuthConfig} auth
-   * @param {string} url
-   */
-  static async #applyAuthentication(page, auth, url) {
-    const { type, cookies, headers, loginScript, loginCredentials } = auth;
-
-    switch (type) {
-      case 'cookies':
-        if (cookies && cookies.length > 0) {
-          const cookiesWithDefaults = AuditService.#normaliseCookies(cookies, url);
-
-          await page.setCookie(...cookiesWithDefaults);
-          log.debug(`Applied ${cookiesWithDefaults.length} authentication cookies`);
-        }
-        break;
-
-      case 'headers':
-        if (headers) {
-          await page.setExtraHTTPHeaders(headers);
-          log.debug(`Applied ${Object.keys(headers).length} authentication headers`);
-        }
-        break;
-
-      case 'login-script':
-        if (loginScript) {
-          try {
-            // Import the login script module
-            const scriptPath = loginScript.startsWith('/')
-              ? loginScript
-              : `${process.cwd()}/${loginScript}`;
-            const fileUrl = pathToFileURL(scriptPath).href;
-            const loginModule = await import(fileUrl);
-            const loginFn = loginModule.default || loginModule.login;
-
-            if (typeof loginFn === 'function') {
-              await loginFn(page, loginCredentials || {});
-              log.debug('Executed authentication login script');
-            } else {
-              log.warn('Login script does not export a function');
-            }
-          } catch (err) {
-            log.warn(`Failed to execute login script: ${err?.message || err}`);
-          }
-        }
-        break;
-
-      default:
-        // No authentication
-        break;
-    }
-  }
-
-  /**
-   * Deduplicate issues across tools by CSS selector and rule type.
-   *
-   * @private
-   * @param {UnifiedIssue[]} issues
-   * @returns {UnifiedIssue[]}
-   */
-  static #deduplicateIssues(issues) {
-    /** @type {Map<string, UnifiedIssue>} */
-    const uniqueIssues = new Map();
-
-    for (const issue of issues) {
-      // Create a deduplication key based on selector and WCAG criteria
-      const wcagIds = (issue.wcagCriteria || []).map((c) => c.id).sort().join(',');
-      const key = `${issue.selector || 'no-selector'}::${wcagIds || issue.message.substring(0, 50)}`;
-
-      if (!uniqueIssues.has(key)) {
-        uniqueIssues.set(key, issue);
-      } else {
-        // Keep the issue with higher severity, while preserving richer evidence.
-        const existing = uniqueIssues.get(key);
-        uniqueIssues.set(key, AuditService.#mergeDuplicateIssuePair(existing, issue));
-      }
-    }
-
-    return Array.from(uniqueIssues.values());
-  }
-
-  /**
-   * Merge two duplicate issues preserving severity precedence and richer evidence.
-   *
-   * @private
-   * @param {UnifiedIssue} a
-   * @param {UnifiedIssue} b
-   * @returns {UnifiedIssue}
-   */
-  static #mergeDuplicateIssuePair(a, b) {
-    const scoreA = AuditService.#issueEvidenceScore(a);
-    const scoreB = AuditService.#issueEvidenceScore(b);
-
-    let primary = a;
-    let secondary = b;
-
-    if (b.severity < a.severity) {
-      primary = b;
-      secondary = a;
-    } else if (a.severity === b.severity && scoreB > scoreA) {
-      primary = b;
-      secondary = a;
-    }
-
-    const primaryWcag = primary.wcagCriteria || [];
-    const secondaryWcag = secondary.wcagCriteria || [];
-    const mergedWcag = [
-      ...primaryWcag,
-      ...secondaryWcag.filter((criterion) => !primaryWcag.some((aCriterion) => aCriterion.id === criterion.id)),
-    ];
-
-    const secondaryEvidenceScore = AuditService.#issueEvidenceScore(secondary);
-    const evidence = secondaryEvidenceScore > AuditService.#issueEvidenceScore(primary)
-      ? secondary.evidence
-      : primary.evidence;
-
-    return {
-      ...primary,
-      wcagCriteria: mergedWcag,
-      help: primary.help || secondary.help,
-      helpUrl: primary.helpUrl || secondary.helpUrl,
-      evidence,
-    };
-  }
-
-  /**
-   * Score issue evidence quality for deduplication merge decisions.
-   *
-   * @private
-   * @param {UnifiedIssue} issue
-   * @returns {number}
-   */
-  static #issueEvidenceScore(issue) {
-    const evidence = issue?.evidence;
-    if (!evidence) return 0;
-
-    const confidenceScore = {
-      high: 3,
-      medium: 2,
-      low: 1,
-    }[evidence.confidence] || 0;
-
-    const snippetScore = evidence.snippet ? 2 : 0;
-    const lineScore = evidence.locator?.line ? 1 : 0;
-
-    return confidenceScore + snippetScore + lineScore;
-  }
-
-  /**
-   * Build route-level evidence telemetry summary.
-   *
-   * @private
-   * @param {UnifiedIssue[]} issues
-   * @param {boolean} enabled
-   * @param {number} extractionMs
-   * @returns {{ enabled: boolean, totalIssues: number, high: number, medium: number, low: number, unresolved: number, extractionMs: number }}
-   */
-  static #summarizeEvidence(issues, enabled, extractionMs) {
-    const summary = {
-      enabled: Boolean(enabled),
-      totalIssues: issues.length,
-      high: 0,
-      medium: 0,
-      low: 0,
-      unresolved: 0,
-      extractionMs: Math.max(0, Number(extractionMs) || 0),
-    };
-
-    for (const issue of issues) {
-      const confidence = issue.evidence?.confidence;
-      if (confidence === 'high') summary.high += 1;
-      else if (confidence === 'medium') summary.medium += 1;
-      else if (confidence === 'low') summary.low += 1;
-      else if (!enabled) continue;
-      else summary.low += 1;
-
-      if (issue.evidence?.source === 'tool-context' || issue.evidence?.captureError) {
-        summary.unresolved += 1;
-      }
-    }
-
-    return summary;
   }
 }
 

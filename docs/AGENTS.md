@@ -1,11 +1,12 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `index.js` is the CLI entry point and orchestration layer.
-- `services/` contains core runtime modules:
-  - `AuditService.js` runs Lighthouse, axe-core, and Pa11y audits.
-  - `CrawlerService.js` discovers URLs (sitemap, SPA routes, crawl limits).
-- `utils/` holds shared helpers (`Config.js`, `ReportGenerator.js`, `BrowserManager.js`, WCAG mapping/scoring utilities, logging, validation).
+- `index.js` is the stable CLI/bin entrypoint.
+- `cli/` contains parsing, help text, input flow, orchestration and summary rendering.
+- `services/` contains facade modules plus extracted internals under `services/audit/` and `services/crawler/`.
+- `utils/` contains facades and shared helpers; format-specific report modules live under `utils/report/`, WCAG datasets/helpers under `utils/wcag/`.
+- `types/` holds shared JSDoc typedef modules.
+- `scripts/check-modularity.js` enforces import boundaries and file-size guardrails.
 - `reports/` and `logs/` are output/runtime artifacts; treat them as generated files, not source.
 
 ## Build, Test, and Development Commands
@@ -13,6 +14,8 @@
 - `npm start -- --url https://example.com` — run the CLI locally.
 - `npm run audit -- --url https://example.com --format html` — explicit audit command (same entry point).
 - `npm run lint` — run ESLint across the repo.
+- `npm test` — run Node test suite.
+- `npm run check:modularity` — run boundary and file-size checks.
 - `npm run format` — format code with Prettier.
 - `./install.sh` — install the CLI globally as `a11y-audit-pro`.
 
@@ -23,11 +26,17 @@
 - Prefer small, focused functions in `utils/` for reusable logic.
 
 ## Testing Guidelines
-- There is currently no automated test suite or `npm test` script in this repository.
 - Before opening a PR, run:
   - `npm run lint`
+  - `npm test`
+  - `npm run check:modularity`
   - at least one real audit smoke test, e.g. `npm run audit -- --url https://example.com --limit 3 --no-interactive`
-- If you add tests, place them near the related module (for example, `services/__tests__/AuditService.test.js`) and add a matching npm script.
+- Place tests in `test/` and keep coverage focused on public contracts and regression-prone internals.
+
+## Module Boundary Rules
+- Allowed import direction: `cli -> services -> utils`.
+- `utils/` modules must not import `services/` or `cli/`.
+- `services/` modules must not import `cli/`.
 
 ## Commit & Pull Request Guidelines
 - Git history is minimal; existing commit style is short, plain-language summaries.
