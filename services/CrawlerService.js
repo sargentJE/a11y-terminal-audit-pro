@@ -770,12 +770,16 @@ export class CrawlerService {
     try {
       const url = new URL(urlStr);
       const path = url.pathname;
+      const pathWithQuery = `${url.pathname}${url.search}`;
 
       for (const disallowed of this.disallowedPaths) {
         // Handle wildcard patterns
         if (disallowed.includes('*')) {
-          const regex = new RegExp('^' + disallowed.replace(/\*/g, '.*'));
-          if (regex.test(path)) return true;
+          const regex = this.#wildcardRobotsRuleToRegex(disallowed);
+          if (regex.test(pathWithQuery)) return true;
+        } else if (disallowed.includes('?')) {
+          // Query-sensitive rules like "/*?" should only match when query exists.
+          if (pathWithQuery.startsWith(disallowed)) return true;
         } else if (path.startsWith(disallowed)) {
           return true;
         }
@@ -785,6 +789,21 @@ export class CrawlerService {
     }
 
     return false;
+  }
+
+  /**
+   * Convert a robots.txt wildcard disallow rule into a safe regular expression.
+   *
+   * @private
+   * @param {string} rule
+   * @returns {RegExp}
+   */
+  #wildcardRobotsRuleToRegex(rule) {
+    const regexRule = rule
+      .replace(/[.+^${}()|[\]\\?]/g, '\\$&')
+      .replace(/\*/g, '.*');
+
+    return new RegExp(`^${regexRule}`);
   }
 
   /**
