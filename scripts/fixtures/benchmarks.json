@@ -1,0 +1,14 @@
+{
+  "public": [
+    {"url": "https://example.com/", "limit": 1},
+    {"url": "https://www.w3.org/WAI/demos/bad/", "limit": 3},
+    {"url": "https://www.python.org/", "limit": 3},
+    {"url": "https://www.myvision.org.uk/", "limit": 3}
+  ],
+  "local": [
+    {"url": "http://localhost:4173/good", "limit": 1},
+    {"url": "http://localhost:4173/bad", "limit": 1},
+    {"url": "http://localhost:4173/spa", "limit": 2},
+    {"url": "http://localhost:4173/auth", "limit": 1}
+  ]
+}

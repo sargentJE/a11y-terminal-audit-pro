@@ -652,6 +652,9 @@ npm test
 # Run modularity guardrails
 npm run check:modularity
 
+# Run accuracy audit harness
+npm run audit:accuracy
+
 # Format code
 npm run format
 

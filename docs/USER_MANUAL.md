@@ -237,6 +237,27 @@ Exit codes:
 
 ---
 
+## Accuracy Audit Harness
+
+The project ships a comprehensive audit harness for accuracy and determinism checks.
+
+Run the full suite (public + local fixtures):
+```bash
+npm run audit:accuracy
+```
+
+Run local-only (CI/PR-friendly):
+```bash
+node scripts/accuracy/run-accuracy-audit.js --scope local
+```
+
+The harness writes summaries to:
+```
+reports/accuracy/<timestamp>/
+```
+
+---
+
 ## Troubleshooting
 
 ### Chrome not found

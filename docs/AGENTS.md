@@ -16,6 +16,7 @@
 - `npm run lint` — run ESLint across the repo.
 - `npm test` — run Node test suite.
 - `npm run check:modularity` — run boundary and file-size checks.
+- `npm run audit:accuracy` — run accuracy/determinism harness (local + public).
 - `npm run format` — format code with Prettier.
 - `./install.sh` — install the CLI globally as `a11y-audit-pro`.
 

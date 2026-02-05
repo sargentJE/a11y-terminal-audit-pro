@@ -59,7 +59,8 @@ export class ReportGenerator {
       log.debug(`Generated ${format.toUpperCase()} report: ${filepath}`);
     }
 
-    if (options.openHtml && htmlPath) {
+    const skipOpen = process.env.A11Y_SKIP_OPEN_HTML === '1' || process.env.A11Y_OPEN_HTML === 'false';
+    if (!skipOpen && options.openHtml && htmlPath) {
       openInBrowser(htmlPath);
     }
 
