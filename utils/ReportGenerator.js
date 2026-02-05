@@ -1000,10 +1000,10 @@ export class ReportGenerator {
 
     <!-- Navigation Tabs -->
     <nav class="lh-tabs">
-      <button class="lh-tab active" onclick="showTab('all-issues')">All Issues</button>
-      <button class="lh-tab" onclick="showTab('by-page')">By Page</button>
-      <button class="lh-tab" onclick="showTab('by-wcag')">By WCAG Criteria</button>
-      <button class="lh-tab" onclick="showTab('metadata')">Report Info</button>
+      <button class="lh-tab active" onclick="showTab(event, 'all-issues')">All Issues</button>
+      <button class="lh-tab" onclick="showTab(event, 'by-page')">By Page</button>
+      <button class="lh-tab" onclick="showTab(event, 'by-wcag')">By WCAG Criteria</button>
+      <button class="lh-tab" onclick="showTab(event, 'metadata')">Report Info</button>
     </nav>
 
     <!-- All Issues Tab -->
@@ -1014,11 +1014,11 @@ export class ReportGenerator {
       </div>
 
       <div class="lh-filters">
-        <button class="lh-filter-btn active" onclick="filterIssues('all')">All (${allIssues.length})</button>
-        <button class="lh-filter-btn" onclick="filterIssues('critical')">Critical (${issuesBySeverity.critical.length})</button>
-        <button class="lh-filter-btn" onclick="filterIssues('serious')">Serious (${issuesBySeverity.serious.length})</button>
-        <button class="lh-filter-btn" onclick="filterIssues('moderate')">Moderate (${issuesBySeverity.moderate.length})</button>
-        <button class="lh-filter-btn" onclick="filterIssues('minor')">Minor (${issuesBySeverity.minor.length})</button>
+        <button class="lh-filter-btn active" onclick="filterIssues(event, 'all')">All (${allIssues.length})</button>
+        <button class="lh-filter-btn" onclick="filterIssues(event, 'critical')">Critical (${issuesBySeverity.critical.length})</button>
+        <button class="lh-filter-btn" onclick="filterIssues(event, 'serious')">Serious (${issuesBySeverity.serious.length})</button>
+        <button class="lh-filter-btn" onclick="filterIssues(event, 'moderate')">Moderate (${issuesBySeverity.moderate.length})</button>
+        <button class="lh-filter-btn" onclick="filterIssues(event, 'minor')">Minor (${issuesBySeverity.minor.length})</button>
       </div>
 
       <div id="issues-list">
@@ -1086,7 +1086,7 @@ export class ReportGenerator {
   </div>
 
   <script>
-    function showTab(tabId) {
+    function showTab(event, tabId) {
       // Hide all tabs
       document.querySelectorAll('.lh-tab-content').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.lh-tab').forEach(el => el.classList.remove('active'));
@@ -1096,7 +1096,7 @@ export class ReportGenerator {
       event.target.classList.add('active');
     }
 
-    function filterIssues(severity) {
+    function filterIssues(event, severity) {
       const issues = document.querySelectorAll('#issues-list .lh-audit');
       const btns = document.querySelectorAll('.lh-filter-btn');
 
@@ -1165,9 +1165,17 @@ export class ReportGenerator {
     });
 
     // Escape CSV values
+    const sanitizeForSpreadsheet = (str) => {
+      // Prevent CSV formula execution in spreadsheet tools.
+      if (/^[\t\r ]*[=+\-@]/.test(str)) {
+        return `'${str}`;
+      }
+      return str;
+    };
+
     const escapeCSV = (val) => {
       if (val === null || val === undefined) return '';
-      const str = String(val);
+      const str = sanitizeForSpreadsheet(String(val));
       if (str.includes(',') || str.includes('"') || str.includes('\n')) {
         return `"${str.replace(/"/g, '""')}"`;
       }

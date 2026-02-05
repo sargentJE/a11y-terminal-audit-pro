@@ -24,7 +24,7 @@
 import { Listr } from 'listr2';
 import enquirerPkg from 'enquirer';
 import cliTablePkg from 'cli-table3';
-import { blue, bold, cyan, green, red, yellow, magenta, gray } from 'colorette';
+import { blue, bold, cyan, green, red, yellow, gray } from 'colorette';
 
 import CrawlerService from './services/CrawlerService.js';
 import AuditService from './services/AuditService.js';

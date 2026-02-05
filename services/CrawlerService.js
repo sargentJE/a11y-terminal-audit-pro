@@ -259,71 +259,6 @@ export class CrawlerService {
   }
 
   /**
-   * Extract links from the page using multiple strategies.
-   *
-   * @private
-   * @param {import('puppeteer').Page} page
-   * @returns {Promise<string[]>}
-   */
-  async #extractLinks(page) {
-    const pierceShadowDom = this.config.pierceShadowDom;
-
-    const hrefs = await page.evaluate((pierce) => {
-      const links = new Set();
-
-      /**
-       * Recursively extract links from a root element, optionally piercing Shadow DOM.
-       * @param {Element|ShadowRoot} root
-       */
-      function extractFromRoot(root) {
-        // Standard anchor links
-        const anchors = root.querySelectorAll('a[href]');
-        anchors.forEach((a) => {
-          const href = a.getAttribute('href');
-          if (href) links.add(href);
-        });
-
-        // Buttons and elements with onclick handlers that might navigate
-        const clickables = root.querySelectorAll('[onclick], button[data-href], [data-link]');
-        clickables.forEach((el) => {
-          // Check data-href attribute
-          const dataHref = el.getAttribute('data-href') || el.getAttribute('data-link');
-          if (dataHref) links.add(dataHref);
-
-          // Parse simple onclick="location.href='...'" or "window.location='...'"
-          const onclick = el.getAttribute('onclick');
-          if (onclick) {
-            const match = onclick.match(/(?:location\.href|window\.location)\s*=\s*['"]([^'"]+)['"]/);
-            if (match) links.add(match[1]);
-          }
-        });
-
-        // Area elements in image maps
-        const areas = root.querySelectorAll('area[href]');
-        areas.forEach((a) => {
-          const href = a.getAttribute('href');
-          if (href) links.add(href);
-        });
-
-        // Pierce Shadow DOM if enabled
-        if (pierce) {
-          const allElements = root.querySelectorAll('*');
-          allElements.forEach((el) => {
-            if (el.shadowRoot) {
-              extractFromRoot(el.shadowRoot);
-            }
-          });
-        }
-      }
-
-      extractFromRoot(document);
-      return Array.from(links);
-    }, pierceShadowDom);
-
-    return hrefs;
-  }
-
-  /**
    * Extract links with priority, separating navigation links from regular links.
    * Navigation links (in nav, header, footer) are prioritized for crawling.
    *
@@ -335,6 +270,7 @@ export class CrawlerService {
     const pierceShadowDom = this.config.pierceShadowDom;
 
     const results = await page.evaluate((pierce) => {
+      /* global document */
       const navigationLinks = new Set();
       const regularLinks = new Set();
 
@@ -596,6 +532,7 @@ export class CrawlerService {
     });
 
     await page.evaluateOnNewDocument(() => {
+      /* global history, window */
       // Intercept pushState
       const originalPushState = history.pushState;
       history.pushState = function (...args) {
