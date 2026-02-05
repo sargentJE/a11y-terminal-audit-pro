@@ -14,6 +14,7 @@
     "audit": "node index.js",
     "test": "node --test",
     "lint": "eslint .",
+    "check:modularity": "node scripts/check-modularity.js",
     "format": "prettier -w ."
   },
   "dependencies": {
