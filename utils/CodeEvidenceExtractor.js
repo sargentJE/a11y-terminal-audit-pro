@@ -11,6 +11,16 @@ import { defaultLogger as log } from './Logger.js';
 
 /** @typedef {import('./SeverityMapper.js').UnifiedIssue} UnifiedIssue */
 /** @typedef {import('./SeverityMapper.js').IssueEvidence} IssueEvidence */
+/**
+ * @typedef {object} EvidenceExtractionSummary
+ * @property {boolean} enabled
+ * @property {number} totalIssues
+ * @property {number} high
+ * @property {number} medium
+ * @property {number} low
+ * @property {number} unresolved
+ * @property {number} extractionMs
+ */
 
 const DEFAULT_OPTIONS = {
   enabled: true,
@@ -19,6 +29,22 @@ const DEFAULT_OPTIONS = {
   maxOpsPerPage: 500,
   timeoutMs: 1500,
 };
+
+const SECRET_KEY_REGEX_SRC = [
+  'access[_-]?token',
+  'id[_-]?token',
+  'refresh[_-]?token',
+  'api[_-]?key',
+  'apikey',
+  'jwt',
+  'token',
+  'authorization',
+  'auth',
+  'password',
+  'secret',
+  'session',
+  'cookie',
+].join('|');
 
 /**
  * @param {Promise<any>} promise
@@ -67,12 +93,28 @@ function redactSensitive(snippet) {
 
   return snippet
     .replace(
-      /\b(token|auth|authorization|password|secret|session|cookie)(\s*=\s*)(["']).*?\3/gi,
+      new RegExp(`\\b(${SECRET_KEY_REGEX_SRC})(\\s*=\\s*)(["']).*?\\3`, 'gi'),
       '$1$2$3[REDACTED]$3'
     )
     .replace(
-      /\b(token|auth|authorization|password|secret|session|cookie)(\s*:\s*)(["']).*?\3/gi,
+      new RegExp(`\\b(${SECRET_KEY_REGEX_SRC})(\\s*:\\s*)(["']).*?\\3`, 'gi'),
       '$1$2$3[REDACTED]$3'
+    )
+    .replace(
+      new RegExp(`\\b(${SECRET_KEY_REGEX_SRC})(\\s*=\\s*)([^\\s"'\\x60>]+)`, 'gi'),
+      '$1$2[REDACTED]'
+    )
+    .replace(
+      new RegExp(`([?&](?:${SECRET_KEY_REGEX_SRC})=)([^&#\\s]+)`, 'gi'),
+      '$1[REDACTED]'
+    )
+    .replace(
+      /(bearer\s+)[a-z0-9._~+/-]+=*/gi,
+      '$1[REDACTED]'
+    )
+    .replace(
+      /\b(set-cookie|cookie)(\s*:\s*[^=;\s]+\s*=)([^;\s]+)/gi,
+      '$1$2[REDACTED]'
     );
 }
 
@@ -160,10 +202,52 @@ export class CodeEvidenceExtractor {
    * @returns {Promise<UnifiedIssue[]>}
    */
   static async enrichIssues(issues, ctx = {}) {
-    if (!Array.isArray(issues) || issues.length === 0) return issues;
+    const { issues: enriched } = await CodeEvidenceExtractor.enrichIssuesWithSummary(issues, ctx);
+    return enriched;
+  }
 
+  /**
+   * Enrich unified issues and return extraction telemetry summary.
+   *
+   * @param {UnifiedIssue[]} issues
+   * @param {object} [ctx]
+   * @param {import('puppeteer').Page} [ctx.page]
+   * @param {string} [ctx.sourceHtml]
+   * @param {Partial<typeof DEFAULT_OPTIONS>} [ctx.options]
+   * @returns {Promise<{ issues: UnifiedIssue[], summary: EvidenceExtractionSummary }>}
+   */
+  static async enrichIssuesWithSummary(issues, ctx = {}) {
+    if (!Array.isArray(issues) || issues.length === 0) {
+      return {
+        issues: Array.isArray(issues) ? issues : [],
+        summary: {
+          enabled: Boolean(ctx.options?.enabled ?? DEFAULT_OPTIONS.enabled),
+          totalIssues: 0,
+          high: 0,
+          medium: 0,
+          low: 0,
+          unresolved: 0,
+          extractionMs: 0,
+        },
+      };
+    }
+
+    const startedAt = Date.now();
     const options = { ...DEFAULT_OPTIONS, ...(ctx.options || {}) };
-    if (!options.enabled) return issues;
+    if (!options.enabled) {
+      return {
+        issues,
+        summary: {
+          enabled: false,
+          totalIssues: issues.length,
+          high: 0,
+          medium: 0,
+          low: 0,
+          unresolved: 0,
+          extractionMs: 0,
+        },
+      };
+    }
 
     const page = ctx.page;
     let sourceHtml = typeof ctx.sourceHtml === 'string' ? ctx.sourceHtml : '';
@@ -206,7 +290,28 @@ export class CodeEvidenceExtractor {
       });
     }
 
-    return enriched;
+    const summary = {
+      enabled: true,
+      totalIssues: enriched.length,
+      high: 0,
+      medium: 0,
+      low: 0,
+      unresolved: 0,
+      extractionMs: Date.now() - startedAt,
+    };
+
+    for (const issue of enriched) {
+      const confidence = issue.evidence?.confidence || 'low';
+      if (confidence === 'high') summary.high += 1;
+      else if (confidence === 'medium') summary.medium += 1;
+      else summary.low += 1;
+
+      if (issue.evidence?.source === 'tool-context' || issue.evidence?.captureError) {
+        summary.unresolved += 1;
+      }
+    }
+
+    return { issues: enriched, summary };
   }
 
   /**

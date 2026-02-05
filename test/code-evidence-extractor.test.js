@@ -101,3 +101,83 @@ test('CodeEvidenceExtractor degrades gracefully to tool context evidence', async
   assert.equal(enriched[0].evidence.confidence, 'low');
   assert.match(enriched[0].evidence.captureError, /Selector lookup failed/);
 });
+
+test('CodeEvidenceExtractor redacts query, bearer, and unquoted secret patterns', async () => {
+  const issues = [
+    {
+      id: 'axe-secret-check-0',
+      tool: 'axe',
+      severity: 2,
+      severityLabel: 'serious',
+      message: 'Sensitive values should not leak',
+      selector: '#secure',
+      html: '',
+      url: 'https://example.com',
+      wcagCriteria: [],
+    },
+  ];
+
+  const page = {
+    evaluate: async () => ({
+      found: true,
+      snippet: '<a id=secure href="/?access_token=abc123&jwt=xyz987" authorization=BearerToken password=topsecret>Link</a>',
+      xpath: '/html[1]/body[1]/a[1]',
+    }),
+    content: async () => '<html><body><a id=secure href="/?access_token=abc123&jwt=xyz987">Link</a></body></html>',
+  };
+
+  const enriched = await CodeEvidenceExtractor.enrichIssues(issues, { page });
+  const snippet = enriched[0].evidence.snippet;
+
+  assert.doesNotMatch(snippet, /abc123/);
+  assert.doesNotMatch(snippet, /xyz987/);
+  assert.doesNotMatch(snippet, /topsecret/i);
+  assert.match(snippet, /\[REDACTED\]/);
+});
+
+test('CodeEvidenceExtractor provides extraction summary telemetry', async () => {
+  const issues = [
+    {
+      id: 'axe-1',
+      tool: 'axe',
+      severity: 2,
+      severityLabel: 'serious',
+      message: 'Issue one',
+      selector: '#known',
+      html: '<div id="known"></div>',
+      url: 'https://example.com',
+      wcagCriteria: [],
+    },
+    {
+      id: 'axe-2',
+      tool: 'axe',
+      severity: 2,
+      severityLabel: 'serious',
+      message: 'Issue two',
+      selector: '#missing',
+      html: '',
+      url: 'https://example.com',
+      wcagCriteria: [],
+    },
+  ];
+
+  const page = {
+    evaluate: async (_fn, selector) => {
+      if (selector === '#known') {
+        return { found: true, snippet: '<div id="known"></div>', xpath: '/html[1]/body[1]/div[1]' };
+      }
+      return { found: false };
+    },
+    content: async () => '<html><body><div id="known"></div></body></html>',
+  };
+
+  const { issues: enriched, summary } = await CodeEvidenceExtractor.enrichIssuesWithSummary(issues, { page });
+
+  assert.equal(enriched.length, 2);
+  assert.equal(summary.enabled, true);
+  assert.equal(summary.totalIssues, 2);
+  assert.equal(summary.high, 1);
+  assert.equal(summary.low, 1);
+  assert.equal(summary.unresolved, 1);
+  assert.ok(summary.extractionMs >= 0);
+});

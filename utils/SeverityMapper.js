@@ -10,6 +10,8 @@
  * - Issue deduplication support
  */
 
+import { createHash } from 'node:crypto';
+
 /**
  * @typedef {Object} WCAGCriterion
  * @property {string} id - WCAG criterion ID (e.g., '1.1.1')
@@ -52,6 +54,7 @@
  * @property {string} [help] - Help text / remediation guidance
  * @property {string} [helpUrl] - Link to more information
  * @property {IssueEvidence} [evidence] - Extracted code evidence for this issue
+ * @property {string} [stableFingerprint] - Deterministic issue fingerprint for regression tracking
  */
 
 /** Severity level constants */
@@ -560,6 +563,78 @@ export class SeverityMapper {
       help: audit.description,
       helpUrl: null,
     }));
+  }
+
+  /**
+   * Generate a deterministic fingerprint for a unified issue.
+   * This intentionally normalizes selector volatility (e.g. dynamic numeric IDs).
+   *
+   * @param {UnifiedIssue} issue
+   * @returns {string}
+   */
+  static getStableFingerprint(issue) {
+    const urlPath = SeverityMapper.#normaliseIssuePath(issue?.url);
+    const normalizedSelector = SeverityMapper.#normaliseSelector(issue?.selector || '');
+    const normalizedMessage = String(issue?.message || '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+    const wcagIds = (issue?.wcagCriteria || [])
+      .map((criterion) => criterion.id)
+      .filter(Boolean)
+      .sort()
+      .join(',');
+
+    const payload = [
+      issue?.tool || 'unknown-tool',
+      urlPath,
+      wcagIds,
+      normalizedMessage,
+      normalizedSelector,
+    ].join('|');
+
+    return createHash('sha256').update(payload).digest('hex').slice(0, 24);
+  }
+
+  /**
+   * Attach a deterministic fingerprint to an issue.
+   *
+   * @param {UnifiedIssue} issue
+   * @returns {UnifiedIssue}
+   */
+  static withStableFingerprint(issue) {
+    return {
+      ...issue,
+      stableFingerprint: SeverityMapper.getStableFingerprint(issue),
+    };
+  }
+
+  /**
+   * @private
+   * @param {string|undefined} url
+   * @returns {string}
+   */
+  static #normaliseIssuePath(url) {
+    if (!url) return '/';
+    try {
+      const parsed = new URL(url);
+      return parsed.pathname || '/';
+    } catch {
+      return '/';
+    }
+  }
+
+  /**
+   * @private
+   * @param {string} selector
+   * @returns {string}
+   */
+  static #normaliseSelector(selector) {
+    return selector
+      .toLowerCase()
+      .replace(/\d{3,}/g, '{n}')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /**

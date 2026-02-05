@@ -175,6 +175,7 @@ export class AuditService {
       // Unified issues with WCAG mapping
       unifiedIssues: [],
       totalIssues: 0,
+      evidenceSummary: null,
 
       // Detailed sections for exported JSON:
       lighthouse: null,
@@ -199,6 +200,7 @@ export class AuditService {
       // Collect all unified issues
       /** @type {UnifiedIssue[]} */
       let allIssues = [];
+      let evidenceExtractionMs = 0;
 
       // ---------------------------------------------------------------------
       // 1) Lighthouse (Accessibility)
@@ -339,9 +341,9 @@ export class AuditService {
         log.warn(`Pa11y failed for ${url}: ${err?.message || err}`);
       }
 
-      if (evidenceOptions.enabled && allIssues.length > 0) {
+      if (allIssues.length > 0) {
         // Ensure we have a page context for selector-based evidence resolution.
-        if (!pageHtml) {
+        if (evidenceOptions.enabled && !pageHtml) {
           try {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
             await page.waitForNetworkIdle({ idleTime: 750, timeout: 10_000 }).catch(() => {});
@@ -351,11 +353,13 @@ export class AuditService {
           }
         }
 
-        allIssues = await CodeEvidenceExtractor.enrichIssues(allIssues, {
+        const enrichment = await CodeEvidenceExtractor.enrichIssuesWithSummary(allIssues, {
           page,
           sourceHtml: pageHtml,
           options: evidenceOptions,
         });
+        allIssues = enrichment.issues;
+        evidenceExtractionMs = enrichment.summary.extractionMs;
       }
 
       // Deduplicate issues if enabled
@@ -363,8 +367,15 @@ export class AuditService {
         allIssues = AuditService.#deduplicateIssues(allIssues);
       }
 
+      allIssues = allIssues.map((issue) => SeverityMapper.withStableFingerprint(issue));
+
       result.unifiedIssues = allIssues;
       result.totalIssues = allIssues.length;
+      result.evidenceSummary = AuditService.#summarizeEvidence(
+        allIssues,
+        evidenceOptions.enabled,
+        evidenceExtractionMs
+      );
 
     } finally {
       await page.close().catch(() => {});
@@ -600,6 +611,42 @@ export class AuditService {
     const lineScore = evidence.locator?.line ? 1 : 0;
 
     return confidenceScore + snippetScore + lineScore;
+  }
+
+  /**
+   * Build route-level evidence telemetry summary.
+   *
+   * @private
+   * @param {UnifiedIssue[]} issues
+   * @param {boolean} enabled
+   * @param {number} extractionMs
+   * @returns {{ enabled: boolean, totalIssues: number, high: number, medium: number, low: number, unresolved: number, extractionMs: number }}
+   */
+  static #summarizeEvidence(issues, enabled, extractionMs) {
+    const summary = {
+      enabled: Boolean(enabled),
+      totalIssues: issues.length,
+      high: 0,
+      medium: 0,
+      low: 0,
+      unresolved: 0,
+      extractionMs: Math.max(0, Number(extractionMs) || 0),
+    };
+
+    for (const issue of issues) {
+      const confidence = issue.evidence?.confidence;
+      if (confidence === 'high') summary.high += 1;
+      else if (confidence === 'medium') summary.medium += 1;
+      else if (confidence === 'low') summary.low += 1;
+      else if (!enabled) continue;
+      else summary.low += 1;
+
+      if (issue.evidence?.source === 'tool-context' || issue.evidence?.captureError) {
+        summary.unresolved += 1;
+      }
+    }
+
+    return summary;
   }
 }
 
