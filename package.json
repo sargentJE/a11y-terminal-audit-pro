@@ -12,6 +12,7 @@
   "scripts": {
     "start": "node index.js",
     "audit": "node index.js",
+    "test": "node --test",
     "lint": "eslint .",
     "format": "prettier -w ."
   },
