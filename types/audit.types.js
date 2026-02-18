@@ -1,6 +1,8 @@
 /**
  * Shared audit pipeline typedefs.
  *
+ * @typedef {'lighthouse'|'axe'|'pa11y'} AuditToolName
+ *
  * @typedef {Object} AuditToolError
  * @property {string} message
  *
@@ -14,6 +16,7 @@
  * @property {Array<any>} unifiedIssues
  * @property {number} totalIssues
  * @property {Object<string, AuditToolError>} errors
+ * @property {AuditToolName[]} [tools] - Selected tools for this run
  */
 
 export const __auditTypes = true;

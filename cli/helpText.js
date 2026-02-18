@@ -16,6 +16,8 @@ ${bold('Usage')}
 
 ${bold('Basic Options')}
   --url <url>             Target URL (required unless interactive)
+  --tool <name[,name...]> Scan tools (repeatable): lighthouse, axe, pa11y
+                          Default: axe
   --limit <n>             Max pages to crawl (default: 5)
   --timeout <ms>          Per-tool timeout (default: 60000)
   --standard <name>       WCAG standard (default: WCAG2AA)
@@ -51,7 +53,15 @@ ${bold('CI/CD Threshold Options')} (exit code 1 if threshold exceeded)
   --max-critical <n>      Fail if critical issues exceed threshold
   --max-serious <n>       Fail if serious issues exceed threshold
   --min-score <n>         Fail if Lighthouse score below threshold (0-100)
+                          Requires lighthouse in --tool selection
   --min-compliance <lvl>  Fail if compliance level below A/AA/AAA
+  --include-manual-checks Include manual-review findings in compliance scoring
+
+${bold('Verification Options')}
+  --verification-v2       Enable text-aware contrast verification V2
+  --verification-deterministic  Force deterministic verifier sampling (CI-friendly)
+  --verification-confidence-threshold <level>  Promotion cutoff: low|medium|high (default: high)
+  --verification-grid-size <n>  Sampling grid density (default: 24)
 
 ${bold('Code Evidence Options')}
   --code-evidence         Enable exact code evidence extraction (default: on)
@@ -72,11 +82,14 @@ ${bold('Examples')}
   ${gray('# Basic audit')}
   a11y-audit-pro --url https://example.com --limit 5
 
+  ${gray('# Restore legacy all-tool behavior')}
+  a11y-audit-pro --url https://example.com --tool lighthouse,axe,pa11y
+
   ${gray('# Generate HTML and SARIF reports')}
   a11y-audit-pro --url https://example.com --format json,html,sarif
 
   ${gray('# CI mode with thresholds')}
-  a11y-audit-pro --url https://example.com --max-critical 0 --min-score 80
+  a11y-audit-pro --url https://example.com --tool lighthouse,axe --max-critical 0 --min-score 80
 
   ${gray('# With authentication')}
   a11y-audit-pro --url https://myapp.com --cookies '[{"name":"token","value":"xyz"}]'

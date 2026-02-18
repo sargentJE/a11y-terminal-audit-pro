@@ -9,11 +9,15 @@ import {
   wildcardRobotsRuleToRegex,
 } from '../services/crawler/filters/urlFilters.js';
 
-test('canonicalUrl strips hash and optionally query', () => {
+test('canonicalUrl strips hash, optionally query, and normalizes trailing slash', () => {
   const withQuery = canonicalUrl('https://example.com', true, '/about?x=1#section');
+  const withTrailingSlash = canonicalUrl('https://example.com', true, '/about/?x=1#section');
+  const rootWithSlash = canonicalUrl('https://example.com', true, '/#section');
   const noQuery = canonicalUrl('https://example.com', false, '/about?x=1#section');
 
   assert.equal(withQuery, 'https://example.com/about?x=1');
+  assert.equal(withTrailingSlash, 'https://example.com/about?x=1');
+  assert.equal(rootWithSlash, 'https://example.com/');
   assert.equal(noQuery, 'https://example.com/about');
 });
 

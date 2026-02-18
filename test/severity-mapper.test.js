@@ -49,3 +49,43 @@ test('stable fingerprint changes when the normalized issue meaning changes', () 
     SeverityMapper.getStableFingerprint(issueB)
   );
 });
+
+test('normalizePa11yIssue maps warning to manual-review excluded from compliance', () => {
+  const issue = SeverityMapper.normalizePa11yIssue(
+    {
+      code: 'WCAG2AA.Principle1.Guideline1_4.1_4_3.G18.BgImage',
+      type: 'warning',
+      typeCode: 2,
+      message: 'Contrast warning',
+      selector: '.hero-title',
+      context: '<h1 class="hero-title">Title</h1>',
+    },
+    'https://example.com'
+  );
+
+  assert.equal(issue.findingKind, 'manual-review');
+  assert.equal(issue.countsTowardCompliance, false);
+  assert.equal(issue.findingCertainty, 'manual-review');
+  assert.equal(issue.promotionPolicyVersion, null);
+  assert.equal(issue.engineMeta.ruleCode, 'WCAG2AA.Principle1.Guideline1_4.1_4_3.G18.BgImage');
+  assert.equal(issue.engineMeta.typeCode, 2);
+});
+
+test('normalizePa11yIssue maps error to violation counted for compliance', () => {
+  const issue = SeverityMapper.normalizePa11yIssue(
+    {
+      code: 'WCAG2A.Principle1.Guideline1_1.1_1_1.H30.2',
+      type: 'error',
+      typeCode: 1,
+      message: 'Missing alt text',
+      selector: 'img.hero',
+      context: '<img class="hero">',
+    },
+    'https://example.com'
+  );
+
+  assert.equal(issue.findingKind, 'violation');
+  assert.equal(issue.countsTowardCompliance, true);
+  assert.equal(issue.findingCertainty, 'confirmed');
+  assert.equal(issue.promotionPolicyVersion, null);
+});

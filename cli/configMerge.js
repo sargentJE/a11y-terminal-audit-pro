@@ -1,4 +1,5 @@
 import { Config } from '../utils/Config.js';
+import { parseToolSelection } from '../utils/toolSelection.js';
 
 /**
  * Parse authentication options from CLI args.
@@ -40,6 +41,8 @@ export function parseAuthConfig(args) {
  * @param {string|undefined} urlArg
  */
 export async function loadMergedConfig(cwd, args, urlArg) {
+  const cliTools = parseToolSelection(args.tool, { allowUndefined: true });
+
   return Config.load(cwd, {
     url: urlArg,
     limit: args.limit ? Number(args.limit) : undefined,
@@ -67,6 +70,16 @@ export async function loadMergedConfig(cwd, args, urlArg) {
     report: {
       csvLegacy: args.csvLegacy || undefined,
     },
+    compliance: {
+      includeManualChecks: args.includeManualChecks || undefined,
+    },
+    verification: {
+      v2: args.verificationV2 || undefined,
+      deterministic: args.verificationDeterministic || undefined,
+      confidenceThreshold: args.verificationConfidenceThreshold || undefined,
+      gridSize: args.verificationGridSize ? Number(args.verificationGridSize) : undefined,
+    },
+    tools: cliTools,
     thresholds: {
       maxViolations: args.maxViolations ? Number(args.maxViolations) : undefined,
       maxCritical: args.maxCritical ? Number(args.maxCritical) : undefined,

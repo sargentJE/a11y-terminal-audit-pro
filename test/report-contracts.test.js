@@ -24,6 +24,7 @@ test('report generators preserve JSON/HTML/SARIF high-level contract', async () 
         generatedAt: new Date().toISOString(),
         baseUrl: 'https://example.com',
         standard: 'WCAG2AA',
+        tools: ['axe'],
         limit: 5,
         timeoutMs: 60000,
         report: { csvLegacy: false },
@@ -31,6 +32,8 @@ test('report generators preserve JSON/HTML/SARIF high-level contract', async () 
       compliance: {
         level: 'AA',
         score: 88,
+        confirmedScore: 88,
+        reportedScore: 84,
         description: 'Site meets WCAG 2.2 Level AA',
         summary: {
           critical: 0,
@@ -38,11 +41,26 @@ test('report generators preserve JSON/HTML/SARIF high-level contract', async () 
           moderate: 0,
           minor: 0,
           total: 1,
+          manualReview: 0,
+          consideredTotal: 1,
+          reportedTotal: 1,
+          inconclusive: 0,
+          promoted: 0,
         },
         wcagSummary: {
           failedA: [],
           failedAA: ['1.4.3: Contrast (Minimum)'],
           failedAAA: [],
+        },
+        scoringPolicy: {
+          includeManualChecks: false,
+          confidenceThreshold: 'high',
+        },
+        qualitySignals: {
+          manualReviewDominates: false,
+          lowConfidenceDominates: false,
+          certaintyLabel: 'high',
+          notes: [],
         },
       },
       results: [
@@ -67,6 +85,14 @@ test('report generators preserve JSON/HTML/SARIF high-level contract', async () 
               url: 'https://example.com',
               wcagCriteria: [{ id: '1.4.3', level: 'AA', name: 'Contrast (Minimum)' }],
               helpUrl: 'https://dequeuniversity.com/rules/axe/4.11/color-contrast',
+              findingKind: 'violation',
+              findingCertainty: 'confirmed',
+              countsTowardCompliance: true,
+              promotionPolicyVersion: null,
+              corroboratedBy: ['axe'],
+              mergedFrom: ['axe-color-contrast-0'],
+              verificationInputs: [],
+              recommendedFix: 'Increase text/background contrast to at least 4.5:1.',
               evidence: {
                 snippet: '<a class="cta">Read More</a>',
                 source: 'dom-runtime',
@@ -95,8 +121,18 @@ test('report generators preserve JSON/HTML/SARIF high-level contract', async () 
     const sarifData = JSON.parse(await readFile(sarifPath, 'utf8'));
 
     assert.equal(jsonData.meta.tool, 'a11y-terminal-audit-pro');
+    assert.deepEqual(jsonData.meta.tools, ['axe']);
     assert.equal(Array.isArray(jsonData.results), true);
     assert.equal(jsonData.results[0].unifiedIssues[0].stableFingerprint, 'abc123def456abc123def456');
+    assert.equal(jsonData.results[0].unifiedIssues[0].findingKind, 'violation');
+    assert.equal(jsonData.results[0].unifiedIssues[0].findingCertainty, 'confirmed');
+    assert.equal(jsonData.compliance.summary.consideredTotal, 1);
+    assert.equal(jsonData.compliance.summary.inconclusive, 0);
+    assert.equal(jsonData.compliance.summary.promoted, 0);
+    assert.equal(jsonData.compliance.confirmedScore, 88);
+    assert.equal(jsonData.compliance.reportedScore, 84);
+    assert.equal(jsonData.compliance.scoringPolicy.includeManualChecks, false);
+    assert.equal(jsonData.compliance.scoringPolicy.confidenceThreshold, 'high');
 
     assert.match(htmlData, /All Issues/);
     assert.match(htmlData, /By Page/);

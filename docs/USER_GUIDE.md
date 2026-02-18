@@ -15,6 +15,7 @@ Reports are exported in JSON/HTML/CSV/SARIF for engineers, QA, and CI/CD.
 Key capabilities:
 - Intelligent crawling (sitemap + SPA route detection + shadow DOM link extraction)
 - Triple-engine audits (Lighthouse + axe-core + Pa11y)
+- Default tool selection runs `axe` unless `--tool` or config `tools` is provided
 - WCAG compliance scoring and level calculation
 - Multi-format reporting (JSON, HTML, CSV, SARIF)
 - CI/CD threshold gating with exit codes
@@ -75,6 +76,7 @@ a11y-audit-pro --url https://example.com --format json,html,csv,sarif
 ### Run in CI (fails on thresholds)
 ```bash
 a11y-audit-pro --url https://example.com \
+  --tool lighthouse,axe \
   --max-critical 0 \
   --min-score 80 \
   --no-interactive
@@ -86,6 +88,7 @@ a11y-audit-pro --url https://example.com \
 
 ### Basic
 - `--url <url>`: Target URL (required unless interactive)
+- `--tool <name[,name...]>`: Scan tools (`lighthouse`, `axe`, `pa11y`), repeatable, default `axe`
 - `--limit <n>`: Max pages to crawl (default: 5)
 - `--timeout <ms>`: Timeout per tool (default: 60000)
 - `--standard <name>`: WCAG standard (default: WCAG2AA)
@@ -117,6 +120,7 @@ a11y-audit-pro --url https://example.com \
 - `--max-critical <n>`
 - `--max-serious <n>`
 - `--min-score <n>`
+  - Requires Lighthouse in tool selection
 - `--min-compliance <A|AA|AAA>`
 
 ### Code evidence controls
@@ -143,6 +147,7 @@ This creates `.a11yrc.json`. Example:
   "limit": 10,
   "timeout": 60000,
   "standard": "WCAG2AA",
+  "tools": ["axe", "pa11y"],
   "details": true,
   "outDir": "./reports",
   "formats": ["json", "html"],
@@ -232,6 +237,7 @@ Example GitHub Actions:
   run: |
     npx a11y-audit-pro \
       --url ${{ env.DEPLOY_URL }} \
+      --tool lighthouse,axe,pa11y \
       --format json,html,sarif \
       --max-critical 0 \
       --min-score 80 \
@@ -241,6 +247,18 @@ Example GitHub Actions:
 Exit codes:
 - `0`: all thresholds passed
 - `1`: one or more thresholds exceeded
+
+---
+
+## Migration Notes
+
+- Default behavior changed to `axe` only.
+- To match legacy all-engine runs, pass:
+  - `--tool lighthouse,axe,pa11y`
+- If `--min-score` is set, include Lighthouse in `--tool`.
+- CLI shows a one-line migration warning when tool selection is implicit.
+- For CI log hygiene, suppress this warning with:
+  - `A11Y_SUPPRESS_TOOL_DEFAULT_WARNING=1`
 
 ---
 

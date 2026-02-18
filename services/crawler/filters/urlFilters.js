@@ -83,5 +83,8 @@ export function canonicalUrl(origin, includeQuery, urlStr) {
   const u = new URL(urlStr, origin);
   u.hash = '';
   if (!includeQuery) u.search = '';
+  if (u.pathname !== '/' && u.pathname.endsWith('/')) {
+    u.pathname = u.pathname.replace(/\/+$/, '');
+  }
   return u.href;
 }

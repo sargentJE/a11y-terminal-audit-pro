@@ -18,6 +18,8 @@ import fs from 'fs-extra';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { defaultLogger as log } from './Logger.js';
+import { isToolSelectionError, parseToolSelection } from './toolSelection.js';
+import { hasUserThresholds, hasUserToolsSelection } from './config/metaFlags.js';
 
 /** @typedef {import('./Validation.js').ValidatedOptions} ValidatedOptions */
 
@@ -69,6 +71,19 @@ import { defaultLogger as log } from './Logger.js';
  */
 
 /**
+ * @typedef {Object} ComplianceConfig
+ * @property {boolean} [includeManualChecks] - Include manual-review findings in compliance scoring
+ */
+
+/**
+ * @typedef {Object} VerificationConfig
+ * @property {boolean} [v2] - Enable contrast verifier V2
+ * @property {boolean} [deterministic] - Force deterministic verifier sampling
+ * @property {'low'|'medium'|'high'} [confidenceThreshold] - Minimum confidence required for promotion
+ * @property {number} [gridSize] - Sampling grid density for contrast verification
+ */
+
+/**
  * @typedef {Object} FullConfig
  * @property {string} url - Base URL to audit
  * @property {number} limit - Max pages to crawl
@@ -77,6 +92,7 @@ import { defaultLogger as log } from './Logger.js';
  * @property {boolean} details - Include detailed findings
  * @property {string} outDir - Output directory
  * @property {string[]} formats - Output formats: json, html, csv, sarif
+ * @property {string[]} tools - Scan tools: lighthouse, axe, pa11y
  * @property {number} concurrency - Parallel audit workers
  * @property {AuthConfig} [auth] - Authentication configuration
  * @property {ThresholdConfig} [thresholds] - Pass/fail thresholds
@@ -84,6 +100,8 @@ import { defaultLogger as log } from './Logger.js';
  * @property {BrowserConfig} [browser] - Browser launch options
  * @property {EvidenceConfig} [evidence] - Issue code evidence extraction options
  * @property {ReportConfig} [report] - Report generation options
+ * @property {ComplianceConfig} [compliance] - Compliance scoring options
+ * @property {VerificationConfig} [verification] - Contrast verification options
  * @property {boolean} [deduplicateIssues] - Remove duplicate issues across tools
  */
 
@@ -98,6 +116,7 @@ const DEFAULTS = {
   details: false,
   outDir: './reports',
   formats: ['json'],
+  tools: ['axe'],
   concurrency: 1,
   deduplicateIssues: true,
   browser: {
@@ -112,6 +131,15 @@ const DEFAULTS = {
   },
   report: {
     csvLegacy: false,
+  },
+  compliance: {
+    includeManualChecks: false,
+  },
+  verification: {
+    v2: false,
+    deterministic: false,
+    confidenceThreshold: 'high',
+    gridSize: 24,
   },
   crawler: {
     useSitemap: true,  // Enabled by default for comprehensive page discovery
@@ -143,7 +171,8 @@ export class Config {
    */
   static async load(cwd, cliArgs = {}) {
     const fileConfig = await Config.#loadConfigFile(cwd);
-    const hasUserThresholds = Config.#hasUserThresholds(fileConfig, cliArgs);
+    const hasThresholds = hasUserThresholds(fileConfig, cliArgs);
+    const hasToolsSelection = hasUserToolsSelection(fileConfig, cliArgs);
 
     // Deep merge: defaults <- fileConfig <- cliArgs
     const merged = Config.#deepMerge(
@@ -154,7 +183,8 @@ export class Config {
     // Runtime metadata for the CLI flow (kept out of report payloads).
     Object.defineProperty(merged, '__meta', {
       value: {
-        hasUserThresholds,
+        hasUserThresholds: hasThresholds,
+        hasUserToolsSelection: hasToolsSelection,
       },
       enumerable: false,
       writable: false,
@@ -203,6 +233,9 @@ export class Config {
       const content = await fs.readJson(filepath);
       return Config.#validateConfig(content, filepath);
     } catch (err) {
+      if (isToolSelectionError(err)) {
+        throw err;
+      }
       log.warn(`Failed to parse ${filepath}: ${err.message}`);
       return {};
     }
@@ -222,6 +255,9 @@ export class Config {
       const content = module.default || module;
       return Config.#validateConfig(content, filepath);
     } catch (err) {
+      if (isToolSelectionError(err)) {
+        throw err;
+      }
       log.warn(`Failed to load ${filepath}: ${err.message}`);
       return {};
     }
@@ -256,6 +292,9 @@ export class Config {
     if (result.formats && typeof result.formats === 'string') {
       result.formats = [result.formats];
     }
+    if (result.tools !== undefined) {
+      result.tools = parseToolSelection(result.tools);
+    }
     if (result.evidence) {
       result.evidence = { ...result.evidence };
       if (result.evidence.contextLines !== undefined) {
@@ -278,6 +317,46 @@ export class Config {
           result.report.csvLegacy = result.report.csvLegacy.toLowerCase() === 'true';
         } else {
           result.report.csvLegacy = Boolean(result.report.csvLegacy);
+        }
+      }
+    }
+    if (result.compliance) {
+      result.compliance = { ...result.compliance };
+      if (result.compliance.includeManualChecks !== undefined) {
+        if (typeof result.compliance.includeManualChecks === 'string') {
+          result.compliance.includeManualChecks =
+            result.compliance.includeManualChecks.toLowerCase() === 'true';
+        } else {
+          result.compliance.includeManualChecks = Boolean(result.compliance.includeManualChecks);
+        }
+      }
+    }
+    if (result.verification) {
+      result.verification = { ...result.verification };
+      if (result.verification.v2 !== undefined) {
+        if (typeof result.verification.v2 === 'string') {
+          result.verification.v2 = result.verification.v2.toLowerCase() === 'true';
+        } else {
+          result.verification.v2 = Boolean(result.verification.v2);
+        }
+      }
+      if (result.verification.deterministic !== undefined) {
+        if (typeof result.verification.deterministic === 'string') {
+          result.verification.deterministic =
+            result.verification.deterministic.toLowerCase() === 'true';
+        } else {
+          result.verification.deterministic = Boolean(result.verification.deterministic);
+        }
+      }
+      if (result.verification.gridSize !== undefined) {
+        result.verification.gridSize = Number(result.verification.gridSize);
+      }
+      if (result.verification.confidenceThreshold !== undefined) {
+        const normalized = String(result.verification.confidenceThreshold).toLowerCase();
+        if (normalized === 'low' || normalized === 'medium' || normalized === 'high') {
+          result.verification.confidenceThreshold = normalized;
+        } else {
+          result.verification.confidenceThreshold = 'high';
         }
       }
     }
@@ -320,22 +399,6 @@ export class Config {
   }
 
   /**
-   * Determine whether thresholds were explicitly configured by the user.
-   *
-   * @private
-   * @param {Partial<FullConfig>} fileConfig
-   * @param {Partial<FullConfig>} cliArgs
-   * @returns {boolean}
-   */
-  static #hasUserThresholds(fileConfig, cliArgs) {
-    const keys = ['maxViolations', 'maxCritical', 'maxSerious', 'minScore', 'minCompliance'];
-    const hasAny = (obj) =>
-      keys.some((key) => obj?.thresholds && obj.thresholds[key] !== undefined);
-
-    return hasAny(fileConfig) || hasAny(cliArgs);
-  }
-
-  /**
    * Generate a sample config file.
    *
    * @param {string} outputPath
@@ -350,6 +413,7 @@ export class Config {
       details: true,
       outDir: './reports',
       formats: ['json', 'html'],
+      tools: ['axe'],
       concurrency: 3,
       deduplicateIssues: true,
       browser: {
@@ -364,6 +428,15 @@ export class Config {
       },
       report: {
         csvLegacy: false,
+      },
+      compliance: {
+        includeManualChecks: false,
+      },
+      verification: {
+        v2: false,
+        deterministic: false,
+        confidenceThreshold: 'high',
+        gridSize: 24,
       },
       crawler: {
         useSitemap: true,

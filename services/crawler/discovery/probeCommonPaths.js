@@ -25,6 +25,11 @@ export async function probeCommonPaths({
   isDisallowed,
   log,
 }) {
+  const isLikelyNotFoundText = (value) =>
+    /\b(404|not found|page not found|cannot be found|does not exist|doesn't exist|unavailable)\b/i.test(
+      String(value || '')
+    );
+
   const commonPaths = [
     '/about',
     '/about-us',
@@ -116,10 +121,13 @@ export async function probeCommonPaths({
 
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
+  let discoveredCount = 0;
+  const maxDiscoveredCandidates = Math.max(3, Math.min(limit, 8));
 
   try {
     for (const path of commonPaths) {
-      if (visited.size + queue.length >= limit * 3) break;
+      if (visited.size + queue.length >= limit * 2) break;
+      if (discoveredCount >= maxDiscoveredCandidates) break;
 
       const testUrl = `${baseOrigin}${path}`;
       const canonical = canonicalUrl(testUrl);
@@ -139,9 +147,36 @@ export async function probeCommonPaths({
             const finalUrl = page.url();
             const finalCanonical = canonicalUrl(finalUrl);
 
+            const signals = await page
+              .evaluate(() => {
+                const title = globalThis.document.title || '';
+                const h1 = globalThis.document.querySelector('h1')?.textContent || '';
+                const bodyText = (globalThis.document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+                return {
+                  title,
+                  h1,
+                  bodyText: bodyText.slice(0, 1200),
+                  bodyLength: bodyText.length,
+                };
+              })
+              .catch(() => null);
+
+            if (signals) {
+              const notFoundSignal =
+                isLikelyNotFoundText(signals.title) ||
+                isLikelyNotFoundText(signals.h1) ||
+                (signals.bodyLength < 1400 && isLikelyNotFoundText(signals.bodyText));
+
+              if (notFoundSignal) {
+                log.debug(`Skipping likely soft-404 common path: ${finalCanonical}`);
+                continue;
+              }
+            }
+
             if (finalCanonical !== canonicalUrl(baseHref) && !urlDepths.has(finalCanonical)) {
-              queue.push({ url: finalCanonical, priority: 1, depth: 1 });
-              urlDepths.set(finalCanonical, 1);
+              queue.push({ url: finalCanonical, priority: 5, depth: 2 });
+              urlDepths.set(finalCanonical, 2);
+              discoveredCount++;
               log.debug(`Discovered common path: ${finalCanonical}`);
             }
           }

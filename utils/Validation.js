@@ -85,6 +85,9 @@ export function normaliseCrawlTarget(origin, href) {
 
   // Strip hash: a#section is not a new route.
   url.hash = '';
+  if (url.pathname !== '/' && url.pathname.endsWith('/')) {
+    url.pathname = url.pathname.replace(/\/+$/, '');
+  }
 
   // Optional: you could strip some tracking params here (utm_*, etc.)
   // We keep query strings by default because they can genuinely represent

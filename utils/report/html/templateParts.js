@@ -96,6 +96,17 @@ export function generateComplianceLevelGauge(level, targetStandard, size = 96) {
 
 /**
  * @param {any} issue
+ * @returns {'violation'|'manual-review'}
+ */
+export function getFindingKind(issue) {
+  if (issue.countsTowardCompliance === false || issue.findingKind === 'manual-review') {
+    return 'manual-review';
+  }
+  return 'violation';
+}
+
+/**
+ * @param {any} issue
  * @param {number} index
  * @returns {string}
  */
@@ -104,18 +115,28 @@ export function generateIssueCard(issue, index) {
     .map((c) => `<span class="lh-tag lh-tag--${c.level?.toLowerCase() || 'unknown'}">${c.id} (${c.level})</span>`)
     .join('');
   const evidence = issue.evidence;
+  const findingKind = getFindingKind(issue);
+  const findingKindLabel = findingKind === 'manual-review' ? 'Manual Review' : 'Violation';
   const evidenceLabel = evidence
     ? `${String(evidence.confidence || 'low').toUpperCase()} • ${evidence.source || 'tool-context'}`
     : '';
+  const verification = issue.verification;
+  const corroboratedBy = Array.isArray(issue.corroboratedBy) ? issue.corroboratedBy : null;
+  const findingCertainty = issue.findingCertainty || (findingKind === 'violation' ? 'confirmed' : 'manual-review');
 
   return `
-    <details class="lh-audit lh-audit--${issue.severityLabel}" ${index < 3 ? 'open' : ''}>
+    <details class="lh-audit lh-audit--${issue.severityLabel} lh-audit--${findingKind}" ${index < 3 ? 'open' : ''}>
       <summary class="lh-audit__header">
         <span class="lh-audit__icon lh-audit__icon--${issue.severityLabel}"></span>
         <span class="lh-audit__title">${escapeHtml(issue.message)}</span>
+        <span class="lh-audit__kind lh-audit__kind--${findingKind}">${findingKindLabel}</span>
         <span class="lh-audit__tool">${issue.tool}</span>
       </summary>
       <div class="lh-audit__body">
+        <div class="lh-audit__detail">
+          <strong>Finding certainty:</strong> ${escapeHtml(String(findingCertainty))}
+          ${issue.promotionPolicyVersion ? ` • policy ${escapeHtml(issue.promotionPolicyVersion)}` : ''}
+        </div>
         <div class="lh-audit__detail">
           <strong>URL:</strong> <a href="${escapeHtml(issue.url)}" target="_blank">${escapeHtml(issue.url)}</a>
         </div>
@@ -159,6 +180,29 @@ export function generateIssueCard(issue, index) {
             <strong>How to fix:</strong> ${escapeHtml(issue.help)}
           </div>
         ` : ''}
+        ${issue.recommendedFix ? `
+          <div class="lh-audit__detail">
+            <strong>Recommended fix:</strong> ${escapeHtml(issue.recommendedFix)}
+          </div>
+        ` : ''}
+        ${verification ? `
+          <div class="lh-audit__detail">
+            <strong>Contrast verification:</strong>
+            <span class="lh-audit__verify lh-audit__verify--${escapeHtml(verification.status || 'inconclusive')}">${escapeHtml(String(verification.status || 'inconclusive').toUpperCase())}</span>
+            ${verification.minRatio != null ? ` min ratio ${escapeHtml(String(verification.minRatio))}:1` : ''}
+            ${verification.threshold != null ? ` (threshold ${escapeHtml(String(verification.threshold))}:1)` : ''}
+            ${verification.sampleCount != null ? ` • samples ${escapeHtml(String(verification.sampleCount))}` : ''}
+            ${verification.confidence ? ` • confidence ${escapeHtml(String(verification.confidence).toUpperCase())}` : ''}
+            ${verification.reasonCode ? ` • reason ${escapeHtml(String(verification.reasonCode))}` : ''}
+            ${verification.inputsHash ? ` • inputs ${escapeHtml(String(verification.inputsHash))}` : ''}
+            ${verification.reason ? `<div class="lh-evidence-note">${escapeHtml(verification.reason)}</div>` : ''}
+          </div>
+        ` : ''}
+        ${corroboratedBy && corroboratedBy.length > 1 ? `
+          <div class="lh-audit__detail">
+            <strong>Corroborated by:</strong> ${escapeHtml(corroboratedBy.join(', '))}
+          </div>
+        ` : ''}
         ${wcagTags ? `
           <div class="lh-audit__detail">
             <strong>WCAG Criteria:</strong> ${wcagTags}
@@ -182,6 +226,10 @@ export function generatePageRowsHtml(results) {
   return results
     .map((r, idx) => {
       const issueCount = r.unifiedIssues?.length || 0;
+      const confirmedCount =
+        (r.unifiedIssues || []).filter((issue) => getFindingKind(issue) === 'violation').length;
+      const manualReviewCount =
+        (r.unifiedIssues || []).filter((issue) => getFindingKind(issue) === 'manual-review').length;
       const hasErrors = r.errors && Object.keys(r.errors).length > 0;
       return `
       <details class="lh-page-audit" ${idx === 0 ? 'open' : ''}>
@@ -190,6 +238,8 @@ export function generatePageRowsHtml(results) {
           <span class="lh-page-metrics">
             ${r.lhScore !== null ? `<span class="lh-metric ${getScoreClass(r.lhScore)}">LH: ${r.lhScore}%</span>` : ''}
             <span class="lh-metric">Issues: ${issueCount}</span>
+            <span class="lh-metric">Confirmed: ${confirmedCount}</span>
+            <span class="lh-metric">Manual: ${manualReviewCount}</span>
             <span class="lh-metric">${Math.round(r.durationMs / 1000)}s</span>
             ${hasErrors ? '<span class="lh-metric lh-metric--error">⚠ Errors</span>' : ''}
           </span>

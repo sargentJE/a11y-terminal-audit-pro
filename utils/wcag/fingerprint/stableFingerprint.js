@@ -8,7 +8,11 @@ function normaliseIssuePath(url) {
   if (!url) return '/';
   try {
     const parsed = new URL(url);
-    return parsed.pathname || '/';
+    let pathname = parsed.pathname || '/';
+    if (pathname !== '/' && pathname.endsWith('/')) {
+      pathname = pathname.replace(/\/+$/, '');
+    }
+    return pathname || '/';
   } catch {
     return '/';
   }

@@ -2,6 +2,21 @@ import { SeverityMapper } from '../../../utils/SeverityMapper.js';
 import { withRetry } from '../shared/retry.js';
 
 /**
+ * Pa11y (HTMLCS) only supports WCAG2A/AA/AAA. This tool accepts WCAG 2.1/2.2
+ * labels for scoring/mapping, so we down-level for Pa11y execution.
+ *
+ * @param {string} standard
+ * @returns {'WCAG2A'|'WCAG2AA'|'WCAG2AAA'}
+ */
+function toPa11yStandard(standard) {
+  const s = String(standard || '').toUpperCase();
+  if (s.includes('AAA')) return 'WCAG2AAA';
+  // Ensure AA is checked before the trailing 'A' case.
+  if (s.endsWith('AA')) return 'WCAG2AA';
+  return 'WCAG2A';
+}
+
+/**
  * @param {any} i
  */
 function reducePa11yIssue(i) {
@@ -46,11 +61,12 @@ export async function runPa11yAudit({
     async () => {
       const pa11yMod = await import('pa11y');
       const pa11y = pa11yMod.default || pa11yMod;
+      const pa11yStandard = toPa11yStandard(standard);
 
       const pa11yResults = await pa11y(url, {
         browser: instance.browser,
         timeout: timeoutMs,
-        standard,
+        standard: pa11yStandard,
         headers,
         cookies,
         runners: ['htmlcs'],

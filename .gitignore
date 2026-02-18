@@ -4,3 +4,4 @@ reports/*
 !reports/.gitkeep
 .DS_Store
 .env
+.a11yrc.json

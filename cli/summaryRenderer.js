@@ -23,6 +23,7 @@ export function formatComplianceBadge(level) {
  *
  * @param {object} params
  * @param {Array<any>} params.report
+ * @param {string[]} params.selectedTools
  * @param {any} params.compliance
  * @param {any} params.evidenceSummary
  * @param {any} params.thresholdResult
@@ -32,12 +33,21 @@ export function formatComplianceBadge(level) {
  */
 export function renderFinalSummary({
   report,
+  selectedTools,
   compliance,
   evidenceSummary,
   thresholdResult,
   generatedFiles,
   config,
 }) {
+  const isSelected = (tool) => selectedTools.includes(tool);
+  const formatToolMetric = (tool, value, errors, format) => {
+    if (!isSelected(tool)) return gray('SKIP');
+    if (value != null) return format(value);
+    if (errors?.[tool]) return red('ERR');
+    return '—';
+  };
+
   const table = new Table({
     head: [blue('URL'), blue('LH Score'), blue('Axe'), blue('Pa11y'), blue('Issues'), blue('Time')],
     colWidths: [50, 10, 6, 8, 8, 8],
@@ -47,20 +57,26 @@ export function renderFinalSummary({
   for (const r of report) {
     table.push([
       r.url,
-      r.lhScore != null ? `${r.lhScore}%` : '—',
-      r.axeViolations != null ? String(r.axeViolations) : '—',
-      r.pa11yIssues != null ? String(r.pa11yIssues) : '—',
+      formatToolMetric('lighthouse', r.lhScore, r.errors, (v) => `${v}%`),
+      formatToolMetric('axe', r.axeViolations, r.errors, (v) => String(v)),
+      formatToolMetric('pa11y', r.pa11yIssues, r.errors, (v) => String(v)),
       String(r.totalIssues ?? 0),
       typeof r.durationMs === 'number' ? `${Math.round(r.durationMs / 1000)}s` : '—',
     ]);
   }
 
   console.log('\n' + table.toString());
+  console.log(
+    `\n${bold('Scanned Tools')}: ${selectedTools.join(', ')} ${gray('(SKIP means not selected)')}`
+  );
 
   console.log('\n' + bold('WCAG Compliance Summary'));
   console.log('─'.repeat(50));
   console.log(`  Compliance Level: ${formatComplianceBadge(compliance.level)}`);
-  console.log(`  Compliance Score: ${bold(String(compliance.score))}/100`);
+  console.log(
+    `  Compliance Score: ${bold(String(compliance.confirmedScore ?? compliance.score))}/100 (confirmed)`
+  );
+  console.log(`  Reported Score:   ${bold(String(compliance.reportedScore ?? compliance.score))}/100 (all findings)`);
   console.log(`  ${compliance.description}`);
   console.log('');
   console.log(`  Issues by Severity:`);
@@ -68,7 +84,32 @@ export function renderFinalSummary({
   console.log(`    ${yellow('Serious')}:  ${compliance.summary.serious}`);
   console.log(`    ${blue('Moderate')}: ${compliance.summary.moderate}`);
   console.log(`    ${gray('Minor')}:    ${compliance.summary.minor}`);
-  console.log(`    ${bold('Total')}:    ${compliance.summary.total}`);
+  console.log(`    ${bold('Confirmed')}: ${compliance.summary.consideredTotal}`);
+  console.log(`    ${gray('Manual Review')}: ${compliance.summary.manualReview}`);
+  console.log(`    ${gray('Inconclusive')}: ${compliance.summary.inconclusive ?? 0}`);
+  console.log(`    ${bold('Promoted')}: ${compliance.summary.promoted ?? 0}`);
+  console.log(`    ${bold('Reported')}:  ${compliance.summary.reportedTotal}`);
+  if (typeof compliance.summary.rawReportedTotal === 'number') {
+    console.log(
+      `    ${gray('Raw Reported')}: ${compliance.summary.rawReportedTotal} (${compliance.summary.collapsedDuplicates || 0} duplicates collapsed)`
+    );
+  }
+  console.log(
+    `  Scoring Policy: ${
+      compliance.scoringPolicy?.includeManualChecks
+        ? 'manual-review findings included'
+        : 'manual-review findings excluded by default'
+    } (confidence threshold: ${compliance.scoringPolicy?.confidenceThreshold || 'high'})`
+  );
+  console.log(`  Scope: selected tools only (${selectedTools.join(', ')})`);
+  if (compliance.qualitySignals?.manualReviewDominates || compliance.qualitySignals?.lowConfidenceDominates) {
+    console.log(
+      `  ${yellow('Caution')}: certainty ${String(compliance.qualitySignals?.certaintyLabel || 'low').toUpperCase()}`
+    );
+    for (const note of compliance.qualitySignals?.notes || []) {
+      console.log(`    - ${note}`);
+    }
+  }
 
   if (compliance.wcagSummary.failedA.length > 0) {
     console.log(`\n  ${red('Failed Level A Criteria:')}`);

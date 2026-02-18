@@ -6,6 +6,7 @@ import {
   generateComplianceLevelGauge,
   generateGauge,
   generateIssueCard,
+  getFindingKind,
   generatePageRowsHtml,
   generateWcagSummaryHtml,
 } from './templateParts.js';
@@ -30,6 +31,10 @@ export async function generateHtmlReport(data, filepath) {
     moderate: allIssues.filter((i) => i.severityLabel === 'moderate'),
     minor: allIssues.filter((i) => i.severityLabel === 'minor'),
   };
+  const issuesByFinding = {
+    violation: allIssues.filter((i) => getFindingKind(i) === 'violation'),
+    manualReview: allIssues.filter((i) => getFindingKind(i) === 'manual-review'),
+  };
 
   const issuesByWcag = new Map();
   for (const issue of allIssues) {
@@ -43,7 +48,7 @@ export async function generateHtmlReport(data, filepath) {
   }
 
   const overallAccessibilityScore = Math.round(
-    (avgLhScore !== null ? avgLhScore * 0.4 : 0) + compliance.score * 0.6
+    (avgLhScore !== null ? avgLhScore * 0.4 : 0) + (compliance.confirmedScore ?? compliance.score) * 0.6
   );
 
   const pageRowsHtml = generatePageRowsHtml(results);
@@ -76,7 +81,8 @@ export async function generateHtmlReport(data, filepath) {
       ${generateGauge(overallAccessibilityScore, 'Overall Score')}
       ${generateComplianceLevelGauge(compliance.level, meta.standard)}
       ${avgLhScore !== null ? generateGauge(avgLhScore, 'Lighthouse') : ''}
-      ${generateGauge(compliance.score, 'Compliance')}
+      ${generateGauge(compliance.confirmedScore ?? compliance.score, 'Confirmed')}
+      ${generateGauge(compliance.reportedScore ?? compliance.score, 'Reported')}
     </section>
 
     <!-- Compliance Badge -->
@@ -88,6 +94,16 @@ export async function generateHtmlReport(data, filepath) {
           <div class="lh-compliance-desc">${escapeHtml(compliance.description)}</div>
         </div>
       </div>
+      ${
+        compliance.qualitySignals?.manualReviewDominates || compliance.qualitySignals?.lowConfidenceDominates
+          ? `
+      <div class="lh-evidence-note" style="margin-top: 12px;">
+        <strong>Caution:</strong> report certainty is ${escapeHtml(
+          String(compliance.qualitySignals?.certaintyLabel || 'low').toUpperCase()
+        )}. ${(compliance.qualitySignals?.notes || []).map((note) => escapeHtml(note)).join(' ')}
+      </div>`
+          : ''
+      }
     </section>
 
     <!-- Summary Cards -->
@@ -99,6 +115,22 @@ export async function generateHtmlReport(data, filepath) {
       <div class="lh-summary-card">
         <div class="lh-summary-value">${allIssues.length}</div>
         <div class="lh-summary-label">Total Issues</div>
+      </div>
+      <div class="lh-summary-card serious">
+        <div class="lh-summary-value">${issuesByFinding.violation.length}</div>
+        <div class="lh-summary-label">Confirmed Violations</div>
+      </div>
+      <div class="lh-summary-card moderate">
+        <div class="lh-summary-value">${issuesByFinding.manualReview.length}</div>
+        <div class="lh-summary-label">Manual Review</div>
+      </div>
+      <div class="lh-summary-card minor">
+        <div class="lh-summary-value">${compliance.summary.inconclusive ?? 0}</div>
+        <div class="lh-summary-label">Inconclusive</div>
+      </div>
+      <div class="lh-summary-card serious">
+        <div class="lh-summary-value">${compliance.summary.promoted ?? 0}</div>
+        <div class="lh-summary-label">Promoted</div>
       </div>
       <div class="lh-summary-card critical">
         <div class="lh-summary-value">${issuesBySeverity.critical.length}</div>
@@ -135,11 +167,21 @@ export async function generateHtmlReport(data, filepath) {
 
       <div class="lh-filters">
         <button class="lh-filter-btn active" onclick="filterIssues(event, 'all')">All (${allIssues.length})</button>
+        <button class="lh-filter-btn" onclick="filterIssues(event, 'violation')">Violations (${issuesByFinding.violation.length})</button>
+        <button class="lh-filter-btn" onclick="filterIssues(event, 'manual-review')">Manual Review (${issuesByFinding.manualReview.length})</button>
         <button class="lh-filter-btn" onclick="filterIssues(event, 'critical')">Critical (${issuesBySeverity.critical.length})</button>
         <button class="lh-filter-btn" onclick="filterIssues(event, 'serious')">Serious (${issuesBySeverity.serious.length})</button>
         <button class="lh-filter-btn" onclick="filterIssues(event, 'moderate')">Moderate (${issuesBySeverity.moderate.length})</button>
         <button class="lh-filter-btn" onclick="filterIssues(event, 'minor')">Minor (${issuesBySeverity.minor.length})</button>
       </div>
+
+      <p class="lh-more" style="text-align:left;padding:0 0 12px 0;">
+        Scoring policy: ${
+          compliance.scoringPolicy?.includeManualChecks
+            ? 'manual-review findings are included in compliance scoring.'
+            : 'manual-review findings are excluded from compliance scoring by default.'
+        } Confidence threshold: ${escapeHtml(compliance.scoringPolicy?.confidenceThreshold || 'high')}.
+      </p>
 
       <div id="issues-list">
         ${allIssues.slice(0, 100).map((issue, i) => generateIssueCard(issue, i)).join('')}
@@ -173,6 +215,14 @@ export async function generateHtmlReport(data, filepath) {
           <div class="lh-stat">
             <div class="lh-stat-value">${meta.version}</div>
             <div class="lh-stat-label">Tool Version</div>
+          </div>
+          <div class="lh-stat">
+            <div class="lh-stat-value">${meta.schemaVersion || '2.0.0'}</div>
+            <div class="lh-stat-label">Schema Version</div>
+          </div>
+          <div class="lh-stat">
+            <div class="lh-stat-value">${meta.verificationEngineVersion || 'contrast-v1'}</div>
+            <div class="lh-stat-label">Verification Engine</div>
           </div>
           <div class="lh-stat">
             <div class="lh-stat-value">${meta.standard}</div>

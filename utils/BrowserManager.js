@@ -57,6 +57,9 @@ export class BrowserManager {
       '--disable-dev-shm-usage',
       // Helps reduce some flicker/edge cases in tool automation:
       '--disable-features=RenderDocument',
+      // In some sandboxed environments, binding to 0.0.0.0 can be disallowed.
+      // Force the debugging endpoint to be local-only.
+      '--remote-debugging-address=127.0.0.1',
     ];
     const chromeFlags = [...baseChromeFlags];
     const noSandbox = opts.noSandbox === true;
@@ -69,13 +72,39 @@ export class BrowserManager {
 
     log.debug(`Launching Chrome (flags: ${chromeFlags.join(' ')})`);
 
-    const chrome = await chromeLauncher.launch({
-      chromeFlags,
-      // Allow overriding the Chrome binary if needed (CI, custom installs, etc.).
-      chromePath: opts.chromePath ?? process.env.CHROME_PATH,
-      // Log level can be controlled via LOG_LEVEL env var.
-      logLevel: process.env.LOG_LEVEL || 'info',
-    });
+    // chrome-launcher defaults to selecting a random unused port by briefly
+    // binding an HTTP server to 0.0.0.0. Some sandboxed environments disallow
+    // that bind, so we try a small set of fixed ports first.
+    const candidatePorts = [9222, 9223, 9224, 9225, 9226];
+    let chrome;
+    /** @type {any} */
+    let lastErr;
+    for (const port of candidatePorts) {
+      try {
+        chrome = await chromeLauncher.launch({
+          port,
+          chromeFlags,
+          // Allow overriding the Chrome binary if needed (CI, custom installs, etc.).
+          chromePath: opts.chromePath ?? process.env.CHROME_PATH,
+          // Log level can be controlled via LOG_LEVEL env var.
+          logLevel: process.env.LOG_LEVEL || 'info',
+        });
+        break;
+      } catch (err) {
+        lastErr = err;
+        const msg = String(err?.message || err);
+        // If the port is in use, try the next one. Otherwise, fail fast.
+        if (msg.includes('EADDRINUSE')) continue;
+        throw err;
+      }
+    }
+    if (!chrome) {
+      throw new Error(
+        `Failed to launch Chrome on any candidate debugging port (${candidatePorts.join(
+          ', '
+        )}): ${lastErr?.message || lastErr}`
+      );
+    }
 
     // Chrome-launcher starts Chrome, but Puppeteer may need a moment before it can connect.
     const browser = await BrowserManager.#connectWithRetry(chrome.port);

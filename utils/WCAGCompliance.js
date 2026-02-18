@@ -2,175 +2,319 @@
  * utils/WCAGCompliance.js
  * -----------------------------------------------------------------------------
  * WCAG Compliance Level Calculator
- *
- * Determines overall site compliance level (A, AA, AAA, or Non-Conformant)
- * based on unified accessibility issues and their WCAG criteria mappings.
- *
- * Conformance Rules (per WCAG 2.2):
- * - Level A: All Level A success criteria satisfied
- * - Level AA: All Level A + AA success criteria satisfied
- * - Level AAA: All Level A + AA + AAA success criteria satisfied
  */
 
 import { SEVERITY } from './SeverityMapper.js';
+import { dedupeCrossPageIssues } from './wcag/compliance/dedupeCrossPageIssues.js';
 
 /**
  * @typedef {import('./SeverityMapper.js').UnifiedIssue} UnifiedIssue
- * @typedef {import('./SeverityMapper.js').WCAGCriterion} WCAGCriterion
- */
-
-/**
- * @typedef {Object} ComplianceResult
- * @property {string} level - Conformance level: 'AAA' | 'AA' | 'A' | 'Non-Conformant'
- * @property {string} description - Human-readable description
- * @property {Object} summary - Issue counts by severity
- * @property {number} summary.critical - Critical issue count
- * @property {number} summary.serious - Serious issue count
- * @property {number} summary.moderate - Moderate issue count
- * @property {number} summary.minor - Minor issue count
- * @property {number} summary.total - Total issue count
- * @property {Object} wcagSummary - Issues by WCAG level
- * @property {string[]} wcagSummary.failedA - Failed Level A criteria
- * @property {string[]} wcagSummary.failedAA - Failed Level AA criteria
- * @property {string[]} wcagSummary.failedAAA - Failed Level AAA criteria
- * @property {Object} byPrinciple - Issues grouped by WCAG principle
- * @property {number} score - Numeric compliance score (0-100)
- */
-
-/**
+ *
  * @typedef {Object} ThresholdResult
- * @property {boolean} passed - Whether all thresholds passed
- * @property {string[]} failures - List of failed threshold descriptions
- * @property {Object} counts - Actual counts for each threshold type
+ * @property {boolean} passed
+ * @property {string[]} failures
+ * @property {Object} counts
  */
+
+const CONFIDENCE_LEVELS = ['low', 'medium', 'high'];
+
+/**
+ * @param {string | undefined} value
+ * @returns {'low'|'medium'|'high'}
+ */
+function normalizeConfidenceThreshold(value) {
+  const normalized = String(value || '').toLowerCase();
+  return CONFIDENCE_LEVELS.includes(normalized) ? normalized : 'high';
+}
+
+/**
+ * @param {UnifiedIssue[]} issues
+ * @returns {{
+ *   critical: number,
+ *   serious: number,
+ *   moderate: number,
+ *   minor: number,
+ *   total: number
+ * }}
+ */
+function buildSeveritySummary(issues) {
+  const summary = {
+    critical: 0,
+    serious: 0,
+    moderate: 0,
+    minor: 0,
+    total: issues.length,
+  };
+
+  for (const issue of issues) {
+    switch (issue.severity) {
+      case SEVERITY.CRITICAL:
+        summary.critical++;
+        break;
+      case SEVERITY.SERIOUS:
+        summary.serious++;
+        break;
+      case SEVERITY.MODERATE:
+        summary.moderate++;
+        break;
+      case SEVERITY.MINOR:
+        summary.minor++;
+        break;
+    }
+  }
+
+  return summary;
+}
+
+/**
+ * @param {UnifiedIssue[]} issues
+ * @returns {{ failedA: string[], failedAA: string[], failedAAA: string[] }}
+ */
+function buildWcagSummary(issues) {
+  /** @type {Map<string, { name: string, level: string }>} */
+  const failedCriteria = new Map();
+
+  for (const issue of issues) {
+    for (const criterion of issue.wcagCriteria || []) {
+      if (!failedCriteria.has(criterion.id)) {
+        failedCriteria.set(criterion.id, {
+          name: criterion.name,
+          level: criterion.level,
+        });
+      }
+    }
+  }
+
+  const wcagSummary = {
+    failedA: [],
+    failedAA: [],
+    failedAAA: [],
+  };
+
+  for (const [id, criterion] of failedCriteria) {
+    const criterionWithId = `${id}: ${criterion.name}`;
+    switch (criterion.level) {
+      case 'A':
+        wcagSummary.failedA.push(criterionWithId);
+        break;
+      case 'AA':
+        wcagSummary.failedAA.push(criterionWithId);
+        break;
+      case 'AAA':
+        wcagSummary.failedAAA.push(criterionWithId);
+        break;
+    }
+  }
+
+  wcagSummary.failedA.sort();
+  wcagSummary.failedAA.sort();
+  wcagSummary.failedAAA.sort();
+  return wcagSummary;
+}
+
+/**
+ * @param {UnifiedIssue[]} issues
+ * @returns {{
+ *   Perceivable: { count: number, issues: string[] },
+ *   Operable: { count: number, issues: string[] },
+ *   Understandable: { count: number, issues: string[] },
+ *   Robust: { count: number, issues: string[] },
+ *   Unknown: { count: number, issues: string[] },
+ * }}
+ */
+function buildByPrinciple(issues) {
+  const byPrinciple = {
+    Perceivable: { count: 0, issues: [] },
+    Operable: { count: 0, issues: [] },
+    Understandable: { count: 0, issues: [] },
+    Robust: { count: 0, issues: [] },
+    Unknown: { count: 0, issues: [] },
+  };
+
+  for (const issue of issues) {
+    const principles = new Set();
+    for (const criterion of issue.wcagCriteria || []) {
+      if (criterion.principle) principles.add(criterion.principle);
+    }
+
+    if (principles.size === 0) {
+      byPrinciple.Unknown.count++;
+      byPrinciple.Unknown.issues.push(issue.id);
+      continue;
+    }
+
+    for (const principle of principles) {
+      if (byPrinciple[principle]) {
+        byPrinciple[principle].count++;
+        byPrinciple[principle].issues.push(issue.id);
+      }
+    }
+  }
+
+  return byPrinciple;
+}
+
+/**
+ * @param {{ failedA: string[], failedAA: string[], failedAAA: string[] }} wcagSummary
+ * @param {number} manualReview
+ * @returns {{ level: string, description: string }}
+ */
+function buildComplianceLevel(wcagSummary, manualReview) {
+  if (wcagSummary.failedA.length === 0 && wcagSummary.failedAA.length === 0 && wcagSummary.failedAAA.length === 0) {
+    return {
+      level: 'AAA',
+      description: `Site meets WCAG 2.2 Level AAA (highest conformance)${
+        manualReview > 0 ? `; ${manualReview} manual-review findings excluded from scoring` : ''
+      }`,
+    };
+  }
+
+  if (wcagSummary.failedA.length === 0 && wcagSummary.failedAA.length === 0) {
+    return {
+      level: 'AA',
+      description: `Site meets WCAG 2.2 Level AA (${wcagSummary.failedAAA.length} Level AAA issues)${
+        manualReview > 0 ? `; ${manualReview} manual-review findings excluded from scoring` : ''
+      }`,
+    };
+  }
+
+  if (wcagSummary.failedA.length === 0) {
+    return {
+      level: 'A',
+      description: `Site meets WCAG 2.2 Level A (${wcagSummary.failedAA.length} Level AA issues)${
+        manualReview > 0 ? `; ${manualReview} manual-review findings excluded from scoring` : ''
+      }`,
+    };
+  }
+
+  return {
+    level: 'Non-Conformant',
+    description: `Site does not meet WCAG 2.2 Level A (${wcagSummary.failedA.length} Level A failures)${
+      manualReview > 0 ? `; ${manualReview} manual-review findings excluded from scoring` : ''
+    }`,
+  };
+}
+
+/**
+ * @param {UnifiedIssue[]} issues
+ * @returns {{
+ *   manualReviewDominates: boolean,
+ *   lowConfidenceDominates: boolean,
+ *   certaintyLabel: 'high'|'medium'|'low',
+ *   notes: string[]
+ * }}
+ */
+function buildQualitySignals(issues) {
+  const total = issues.length;
+  const manualReview = issues.filter(
+    (issue) => issue.countsTowardCompliance === false || issue.findingKind === 'manual-review'
+  ).length;
+  const verified = issues.filter((issue) => issue.verification?.confidence);
+  const lowConfidence = verified.filter((issue) => issue.verification?.confidence === 'low').length;
+
+  const manualRatio = total > 0 ? manualReview / total : 0;
+  const lowConfidenceRatio = verified.length > 0 ? lowConfidence / verified.length : 0;
+
+  const manualReviewDominates = manualRatio >= 0.6;
+  const lowConfidenceDominates = lowConfidenceRatio >= 0.5;
+
+  let certaintyLabel = 'high';
+  if (manualReviewDominates || lowConfidenceDominates) {
+    certaintyLabel = 'low';
+  } else if (manualRatio >= 0.35 || lowConfidenceRatio >= 0.3) {
+    certaintyLabel = 'medium';
+  }
+
+  const notes = [];
+  if (manualReviewDominates) {
+    notes.push('Manual-review findings dominate reported issues.');
+  }
+  if (lowConfidenceDominates) {
+    notes.push('Low-confidence verification outcomes dominate verified findings.');
+  }
+
+  return {
+    manualReviewDominates,
+    lowConfidenceDominates,
+    certaintyLabel,
+    notes,
+  };
+}
 
 export class WCAGCompliance {
   /**
-   * Calculate overall WCAG compliance level from unified issues.
-   *
-   * @param {UnifiedIssue[]} issues - Array of unified accessibility issues
-   * @param {string} targetStandard - Target WCAG standard (e.g., 'WCAG2AA')
-   * @returns {ComplianceResult}
+   * @param {{
+   *   critical: number,
+   *   serious: number,
+   *   moderate: number,
+   *   minor: number
+   * }} summary
+   * @param {{ failedA: string[], failedAA: string[], failedAAA: string[] }} wcagSummary
+   * @returns {number}
    */
-  static calculate(issues, _targetStandard = 'WCAG2AA') {
-    // Count issues by severity
+  static #calculateScore(summary, wcagSummary) {
+    let score = 100;
+    score -= summary.critical * 15;
+    score -= summary.serious * 8;
+    score -= summary.moderate * 3;
+    score -= summary.minor * 1;
+
+    score -= wcagSummary.failedA.length * 10;
+    score -= wcagSummary.failedAA.length * 5;
+    score -= wcagSummary.failedAAA.length * 2;
+
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }
+
+  /**
+   * @param {UnifiedIssue[]} issues
+   * @param {string} _targetStandard
+   * @param {{ includeManualChecks?: boolean, confidenceThreshold?: 'low'|'medium'|'high' }} [options]
+   * @returns {any}
+   */
+  static calculate(issues, _targetStandard = 'WCAG2AA', options = {}) {
+    const includeManualChecks = options.includeManualChecks === true;
+    const confidenceThreshold = normalizeConfidenceThreshold(options.confidenceThreshold);
+    const reportedIssuesRaw = Array.isArray(issues) ? issues : [];
+    const confirmedIssuesRaw = reportedIssuesRaw.filter(
+      (issue) => issue.countsTowardCompliance !== false
+    );
+    const reportedIssues = dedupeCrossPageIssues(reportedIssuesRaw);
+    const confirmedIssues = dedupeCrossPageIssues(confirmedIssuesRaw);
+    const consideredIssues = includeManualChecks ? reportedIssues : confirmedIssues;
+
+    const severitySummary = buildSeveritySummary(consideredIssues);
+    const manualReviewCount = reportedIssues.filter(
+      (issue) => issue.countsTowardCompliance === false || issue.findingKind === 'manual-review'
+    ).length;
     const summary = {
-      critical: 0,
-      serious: 0,
-      moderate: 0,
-      minor: 0,
-      total: issues.length,
+      ...severitySummary,
+      manualReview: manualReviewCount,
+      consideredTotal: consideredIssues.length,
+      reportedTotal: reportedIssues.length,
+      inconclusive: reportedIssues.filter((issue) => issue.findingCertainty === 'inconclusive').length,
+      promoted: reportedIssues.filter((issue) => issue.findingCertainty === 'promoted').length,
+      rawConsideredTotal: includeManualChecks ? reportedIssuesRaw.length : confirmedIssuesRaw.length,
+      rawReportedTotal: reportedIssuesRaw.length,
+      collapsedDuplicates:
+        Math.max(0, reportedIssuesRaw.length - reportedIssues.length),
     };
 
-    for (const issue of issues) {
-      switch (issue.severity) {
-        case SEVERITY.CRITICAL:
-          summary.critical++;
-          break;
-        case SEVERITY.SERIOUS:
-          summary.serious++;
-          break;
-        case SEVERITY.MODERATE:
-          summary.moderate++;
-          break;
-        case SEVERITY.MINOR:
-          summary.minor++;
-          break;
-      }
-    }
+    const wcagSummary = buildWcagSummary(consideredIssues);
+    const confirmedWcagSummary = buildWcagSummary(confirmedIssues);
+    const reportedWcagSummary = buildWcagSummary(reportedIssues);
+    const byPrinciple = buildByPrinciple(consideredIssues);
+    const { level, description } = buildComplianceLevel(
+      wcagSummary,
+      includeManualChecks ? 0 : manualReviewCount
+    );
 
-    // Track failed WCAG criteria by level
-    const failedCriteria = new Map();
-
-    for (const issue of issues) {
-      for (const criterion of issue.wcagCriteria || []) {
-        if (!failedCriteria.has(criterion.id)) {
-          failedCriteria.set(criterion.id, {
-            criterion,
-            issues: [],
-          });
-        }
-        failedCriteria.get(criterion.id).issues.push(issue);
-      }
-    }
-
-    // Categorize failed criteria by level
-    const wcagSummary = {
-      failedA: [],
-      failedAA: [],
-      failedAAA: [],
-    };
-
-    for (const [id, { criterion }] of failedCriteria) {
-      const criterionWithId = `${id}: ${criterion.name}`;
-      switch (criterion.level) {
-        case 'A':
-          wcagSummary.failedA.push(criterionWithId);
-          break;
-        case 'AA':
-          wcagSummary.failedAA.push(criterionWithId);
-          break;
-        case 'AAA':
-          wcagSummary.failedAAA.push(criterionWithId);
-          break;
-      }
-    }
-
-    // Sort for consistent output
-    wcagSummary.failedA.sort();
-    wcagSummary.failedAA.sort();
-    wcagSummary.failedAAA.sort();
-
-    // Group issues by WCAG principle
-    const byPrinciple = {
-      Perceivable: { count: 0, issues: [] },
-      Operable: { count: 0, issues: [] },
-      Understandable: { count: 0, issues: [] },
-      Robust: { count: 0, issues: [] },
-      Unknown: { count: 0, issues: [] },
-    };
-
-    for (const issue of issues) {
-      const principles = new Set();
-      for (const criterion of issue.wcagCriteria || []) {
-        if (criterion.principle) {
-          principles.add(criterion.principle);
-        }
-      }
-
-      if (principles.size === 0) {
-        byPrinciple.Unknown.count++;
-        byPrinciple.Unknown.issues.push(issue.id);
-      } else {
-        for (const principle of principles) {
-          if (byPrinciple[principle]) {
-            byPrinciple[principle].count++;
-            byPrinciple[principle].issues.push(issue.id);
-          }
-        }
-      }
-    }
-
-    // Determine compliance level
-    let level;
-    let description;
-
-    if (wcagSummary.failedA.length === 0 && wcagSummary.failedAA.length === 0 && wcagSummary.failedAAA.length === 0) {
-      level = 'AAA';
-      description = 'Site meets WCAG 2.2 Level AAA (highest conformance)';
-    } else if (wcagSummary.failedA.length === 0 && wcagSummary.failedAA.length === 0) {
-      level = 'AA';
-      description = `Site meets WCAG 2.2 Level AA (${wcagSummary.failedAAA.length} Level AAA issues)`;
-    } else if (wcagSummary.failedA.length === 0) {
-      level = 'A';
-      description = `Site meets WCAG 2.2 Level A (${wcagSummary.failedAA.length} Level AA issues)`;
-    } else {
-      level = 'Non-Conformant';
-      description = `Site does not meet WCAG 2.2 Level A (${wcagSummary.failedA.length} Level A failures)`;
-    }
-
-    // Calculate numeric score (weighted by severity and WCAG level)
-    const score = WCAGCompliance.#calculateScore(summary, wcagSummary);
+    const confirmedSummary = buildSeveritySummary(confirmedIssues);
+    const reportedSummary = buildSeveritySummary(reportedIssues);
+    const confirmedScore = WCAGCompliance.#calculateScore(confirmedSummary, confirmedWcagSummary);
+    const reportedScore = WCAGCompliance.#calculateScore(reportedSummary, reportedWcagSummary);
+    const score = includeManualChecks ? reportedScore : confirmedScore;
+    const qualitySignals = buildQualitySignals(reportedIssues);
 
     return {
       level,
@@ -179,74 +323,68 @@ export class WCAGCompliance {
       wcagSummary,
       byPrinciple,
       score,
+      confirmedScore,
+      reportedScore,
+      qualitySignals,
+      sitewideRollup: reportedIssues
+        .map((issue) => ({
+          crossPageKey: issue.crossPageKey,
+          message: issue.message,
+          severityLabel: issue.severityLabel,
+          findingKind:
+            issue.findingKind || (issue.countsTowardCompliance === false ? 'manual-review' : 'violation'),
+          findingCertainty: issue.findingCertainty,
+          occurrenceCount: issue.occurrenceCount || 1,
+          affectedPages: issue.affectedPages || [issue.url].filter(Boolean),
+          selector: issue.selector || null,
+          wcagCriteria: (issue.wcagCriteria || []).map((criterion) => criterion.id),
+        }))
+        .sort((a, b) => (b.occurrenceCount || 1) - (a.occurrenceCount || 1)),
+      scoringPolicy: {
+        includeManualChecks,
+        confidenceThreshold,
+      },
     };
   }
 
   /**
-   * Calculate a numeric compliance score (0-100).
-   *
-   * Scoring factors:
-   * - Base score of 100
-   * - Deductions weighted by severity and WCAG level
-   *
-   * @private
-   * @param {Object} summary - Issue counts by severity
-   * @param {Object} wcagSummary - Failed criteria by level
-   * @returns {number}
-   */
-  static #calculateScore(summary, wcagSummary) {
-    let score = 100;
-
-    // Deduct points per issue (weighted by severity)
-    score -= summary.critical * 15; // Critical issues: -15 each
-    score -= summary.serious * 8;   // Serious issues: -8 each
-    score -= summary.moderate * 3;  // Moderate issues: -3 each
-    score -= summary.minor * 1;     // Minor issues: -1 each
-
-    // Additional deductions for WCAG level failures
-    score -= wcagSummary.failedA.length * 10;  // Level A failures: -10 each
-    score -= wcagSummary.failedAA.length * 5;  // Level AA failures: -5 each
-    score -= wcagSummary.failedAAA.length * 2; // Level AAA failures: -2 each
-
-    // Ensure score is between 0 and 100
-    return Math.max(0, Math.min(100, Math.round(score)));
-  }
-
-  /**
-   * Check if results pass the configured thresholds.
-   *
-   * @param {UnifiedIssue[]} issues - Unified issues
-   * @param {number} lighthouseScore - Lighthouse accessibility score (0-100)
-   * @param {Object} thresholds - Threshold configuration
-   * @param {number} [thresholds.maxViolations] - Maximum total violations
-   * @param {number} [thresholds.maxCritical] - Maximum critical issues
-   * @param {number} [thresholds.maxSerious] - Maximum serious issues
-   * @param {number} [thresholds.minScore] - Minimum Lighthouse score
-   * @param {string} [thresholds.minCompliance] - Minimum compliance level
+   * @param {UnifiedIssue[]} issues
+   * @param {number} lighthouseScore
+   * @param {Object} thresholds
+   * @param {number} [thresholds.maxViolations]
+   * @param {number} [thresholds.maxCritical]
+   * @param {number} [thresholds.maxSerious]
+   * @param {number} [thresholds.minScore]
+   * @param {string} [thresholds.minCompliance]
+   * @param {{ includeManualChecks?: boolean, confidenceThreshold?: 'low'|'medium'|'high' }} [options]
    * @returns {ThresholdResult}
    */
-  static checkThresholds(issues, lighthouseScore, thresholds = {}) {
-    const compliance = WCAGCompliance.calculate(issues);
+  static checkThresholds(issues, lighthouseScore, thresholds = {}, options = {}) {
+    const compliance = WCAGCompliance.calculate(issues, 'WCAG2AA', options);
     const failures = [];
 
     const counts = {
-      total: issues.length,
+      total: compliance.summary.consideredTotal,
+      reportedTotal: compliance.summary.reportedTotal,
+      manualReview: compliance.summary.manualReview,
       critical: compliance.summary.critical,
       serious: compliance.summary.serious,
+      inconclusive: compliance.summary.inconclusive,
+      promoted: compliance.summary.promoted,
       lighthouseScore,
       complianceLevel: compliance.level,
+      confirmedScore: compliance.confirmedScore,
+      reportedScore: compliance.reportedScore,
     };
 
-    // Check total violations
     if (thresholds.maxViolations !== undefined && thresholds.maxViolations !== Infinity) {
-      if (issues.length > thresholds.maxViolations) {
+      if (compliance.summary.consideredTotal > thresholds.maxViolations) {
         failures.push(
-          `Total violations (${issues.length}) exceeds threshold (${thresholds.maxViolations})`
+          `Total confirmed violations (${compliance.summary.consideredTotal}) exceeds threshold (${thresholds.maxViolations})`
         );
       }
     }
 
-    // Check critical issues
     if (thresholds.maxCritical !== undefined && thresholds.maxCritical !== Infinity) {
       if (compliance.summary.critical > thresholds.maxCritical) {
         failures.push(
@@ -255,7 +393,6 @@ export class WCAGCompliance {
       }
     }
 
-    // Check serious issues
     if (thresholds.maxSerious !== undefined && thresholds.maxSerious !== Infinity) {
       if (compliance.summary.serious > thresholds.maxSerious) {
         failures.push(
@@ -264,21 +401,16 @@ export class WCAGCompliance {
       }
     }
 
-    // Check Lighthouse score
     if (thresholds.minScore !== undefined && thresholds.minScore > 0) {
       if (lighthouseScore < thresholds.minScore) {
-        failures.push(
-          `Lighthouse score (${lighthouseScore}) below threshold (${thresholds.minScore})`
-        );
+        failures.push(`Lighthouse score (${lighthouseScore}) below threshold (${thresholds.minScore})`);
       }
     }
 
-    // Check compliance level
     if (thresholds.minCompliance) {
       const levelOrder = { 'Non-Conformant': 0, A: 1, AA: 2, AAA: 3 };
       const actualLevel = levelOrder[compliance.level] ?? 0;
       const requiredLevel = levelOrder[thresholds.minCompliance] ?? 0;
-
       if (actualLevel < requiredLevel) {
         failures.push(
           `Compliance level (${compliance.level}) below required (${thresholds.minCompliance})`
@@ -291,76 +423,6 @@ export class WCAGCompliance {
       failures,
       counts,
     };
-  }
-
-  /**
-   * Get a compliance badge color based on level.
-   *
-   * @param {string} level - Compliance level
-   * @returns {string} - Color name for badge
-   */
-  static getBadgeColor(level) {
-    switch (level) {
-      case 'AAA':
-        return 'green';
-      case 'AA':
-        return 'blue';
-      case 'A':
-        return 'yellow';
-      default:
-        return 'red';
-    }
-  }
-
-  /**
-   * Generate a text summary of compliance results.
-   *
-   * @param {ComplianceResult} result - Compliance calculation result
-   * @returns {string}
-   */
-  static formatSummary(result) {
-    const lines = [
-      `WCAG Compliance Level: ${result.level}`,
-      result.description,
-      '',
-      `Compliance Score: ${result.score}/100`,
-      '',
-      'Issues by Severity:',
-      `  Critical: ${result.summary.critical}`,
-      `  Serious:  ${result.summary.serious}`,
-      `  Moderate: ${result.summary.moderate}`,
-      `  Minor:    ${result.summary.minor}`,
-      `  Total:    ${result.summary.total}`,
-      '',
-      'Issues by WCAG Principle:',
-      `  Perceivable:    ${result.byPrinciple.Perceivable.count}`,
-      `  Operable:       ${result.byPrinciple.Operable.count}`,
-      `  Understandable: ${result.byPrinciple.Understandable.count}`,
-      `  Robust:         ${result.byPrinciple.Robust.count}`,
-    ];
-
-    if (result.wcagSummary.failedA.length > 0) {
-      lines.push('', 'Failed Level A Criteria:');
-      for (const c of result.wcagSummary.failedA) {
-        lines.push(`  - ${c}`);
-      }
-    }
-
-    if (result.wcagSummary.failedAA.length > 0) {
-      lines.push('', 'Failed Level AA Criteria:');
-      for (const c of result.wcagSummary.failedAA) {
-        lines.push(`  - ${c}`);
-      }
-    }
-
-    if (result.wcagSummary.failedAAA.length > 0) {
-      lines.push('', 'Failed Level AAA Criteria:');
-      for (const c of result.wcagSummary.failedAAA) {
-        lines.push(`  - ${c}`);
-      }
-    }
-
-    return lines.join('\n');
   }
 }
 

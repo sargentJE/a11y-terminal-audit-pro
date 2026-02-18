@@ -14,6 +14,9 @@ import { summarizeEvidence } from './audit/evidence/evidenceSummary.js';
 import { runLighthouseAudit } from './audit/toolRunners/lighthouseRunner.js';
 import { runAxeAudit } from './audit/toolRunners/axeRunner.js';
 import { runPa11yAudit } from './audit/toolRunners/pa11yRunner.js';
+import { verifyPa11yBackgroundContrast } from './audit/verification/contrastVerifier.js';
+import { applyRemediationHints } from '../utils/wcag/remediationHints.js';
+import { resolveSelectedTools } from '../utils/toolSelection.js';
 
 /** @typedef {{ chrome: any, browser: import('puppeteer').Browser, port: number }} BrowserInstance */
 /** @typedef {import('../utils/SeverityMapper.js').UnifiedIssue} UnifiedIssue */
@@ -33,9 +36,16 @@ export class AuditService {
     const timeoutMs = opts.timeoutMs ?? 60_000;
     const includeDetails = opts.includeDetails ?? false;
     const standard = opts.standard ?? 'WCAG2AA';
+    const selectedTools = resolveSelectedTools(opts.tools);
     const maxRetries = opts.maxRetries ?? 3;
     const retryDelayMs = opts.retryDelayMs ?? 1000;
     const shouldDeduplicate = opts.deduplicateIssues ?? true;
+    const verificationOptions = {
+      v2: opts.verification?.v2 ?? false,
+      deterministic: opts.verification?.deterministic ?? false,
+      confidenceThreshold: opts.verification?.confidenceThreshold ?? 'high',
+      gridSize: opts.verification?.gridSize ?? 24,
+    };
     const evidenceOptions = {
       enabled: opts.evidence?.enabled ?? true,
       contextLines: opts.evidence?.contextLines ?? 2,
@@ -74,67 +84,73 @@ export class AuditService {
       let allIssues = [];
       let evidenceExtractionMs = 0;
 
-      try {
-        const lighthouseResult = await runLighthouseAudit({
-          url,
-          instance,
-          timeoutMs,
-          includeDetails,
-          headers: toolAuth.headers,
-          hasAuth: Boolean(auth),
-          maxRetries,
-          retryDelayMs,
-          log,
-        });
+      if (selectedTools.includes('lighthouse')) {
+        try {
+          const lighthouseResult = await runLighthouseAudit({
+            url,
+            instance,
+            timeoutMs,
+            includeDetails,
+            headers: toolAuth.headers,
+            hasAuth: Boolean(auth),
+            maxRetries,
+            retryDelayMs,
+            log,
+          });
 
-        result.lhScore = lighthouseResult.lhScore;
-        result.lighthouse = lighthouseResult.lighthouse;
-        allIssues.push(...lighthouseResult.issues);
-      } catch (err) {
-        result.errors.lighthouse = { message: err?.message || String(err) };
-        log.warn(`Lighthouse failed for ${url}: ${err?.message || err}`);
+          result.lhScore = lighthouseResult.lhScore;
+          result.lighthouse = lighthouseResult.lighthouse;
+          allIssues.push(...lighthouseResult.issues);
+        } catch (err) {
+          result.errors.lighthouse = { message: err?.message || String(err) };
+          log.warn(`Lighthouse failed for ${url}: ${err?.message || err}`);
+        }
       }
 
-      try {
-        const axeResult = await runAxeAudit({
-          url,
-          page,
-          timeoutMs,
-          includeDetails,
-          maxRetries,
-          retryDelayMs,
-          log,
-        });
+      if (selectedTools.includes('axe')) {
+        try {
+          const axeResult = await runAxeAudit({
+            url,
+            page,
+            timeoutMs,
+            includeDetails,
+            maxRetries,
+            retryDelayMs,
+            log,
+          });
 
-        result.axeViolations = axeResult.axeViolations;
-        result.axe = axeResult.axe;
-        pageHtml = axeResult.pageHtml;
-        allIssues.push(...axeResult.issues);
-      } catch (err) {
-        result.errors.axe = { message: err?.message || String(err) };
-        log.warn(`axe failed for ${url}: ${err?.message || err}`);
+          result.axeViolations = axeResult.axeViolations;
+          result.axe = axeResult.axe;
+          pageHtml = axeResult.pageHtml;
+          allIssues.push(...axeResult.issues);
+        } catch (err) {
+          result.errors.axe = { message: err?.message || String(err) };
+          log.warn(`axe failed for ${url}: ${err?.message || err}`);
+        }
       }
 
-      try {
-        const pa11yResult = await runPa11yAudit({
-          url,
-          instance,
-          timeoutMs,
-          standard,
-          includeDetails,
-          headers: toolAuth.headers,
-          cookies: toolAuth.cookies,
-          maxRetries,
-          retryDelayMs,
-          log,
-        });
+      if (selectedTools.includes('pa11y')) {
+        try {
+          const pa11yResult = await runPa11yAudit({
+            url,
+            instance,
+            timeoutMs,
+            standard,
+            includeDetails,
+            headers: toolAuth.headers,
+            cookies: toolAuth.cookies,
+            maxRetries,
+            retryDelayMs,
+            log,
+          });
 
-        result.pa11yIssues = pa11yResult.pa11yIssues;
-        result.pa11y = pa11yResult.pa11y;
-        allIssues.push(...pa11yResult.issues);
-      } catch (err) {
-        result.errors.pa11y = { message: err?.message || String(err) };
-        log.warn(`Pa11y failed for ${url}: ${err?.message || err}`);
+          result.pa11yIssues = pa11yResult.pa11yIssues;
+          result.pa11y = pa11yResult.pa11y;
+          allIssues.push(...pa11yResult.issues);
+        } catch (err) {
+          result.errors.pa11y = { message: err?.message || String(err) };
+          log.warn(`Pa11y failed for ${url}: ${err?.message || err}`);
+        }
       }
 
       if (allIssues.length > 0) {
@@ -155,12 +171,19 @@ export class AuditService {
         });
         allIssues = enrichment.issues;
         evidenceExtractionMs = enrichment.summary.extractionMs;
+
+        allIssues = await verifyPa11yBackgroundContrast(allIssues, {
+          page,
+          log,
+          ...verificationOptions,
+        });
       }
 
       if (shouldDeduplicate) {
         allIssues = deduplicateIssues(allIssues);
       }
 
+      allIssues = applyRemediationHints(allIssues);
       allIssues = allIssues.map((issue) => SeverityMapper.withStableFingerprint(issue));
 
       result.unifiedIssues = allIssues;

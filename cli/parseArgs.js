@@ -19,6 +19,9 @@ export function parseArgs(argv) {
     'code-evidence',
     'no-code-evidence',
     'csv-legacy',
+    'include-manual-checks',
+    'verification-v2',
+    'verification-deterministic',
   ];
 
   for (let i = 0; i < argv.length; i++) {
@@ -36,7 +39,17 @@ export function parseArgs(argv) {
         if (!next || next.startsWith('--')) {
           throw new Error(`Missing value for --${key}`);
         }
-        args[camelKey] = next;
+        if (key === 'tool') {
+          if (args[camelKey] === undefined) {
+            args[camelKey] = next;
+          } else if (Array.isArray(args[camelKey])) {
+            args[camelKey].push(next);
+          } else {
+            args[camelKey] = [args[camelKey], next];
+          }
+        } else {
+          args[camelKey] = next;
+        }
         i++;
       }
     } else {

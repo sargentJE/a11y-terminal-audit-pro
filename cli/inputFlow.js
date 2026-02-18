@@ -1,5 +1,6 @@
 import enquirerPkg from 'enquirer';
 import { parseHttpUrl, toBoundedInt } from '../utils/Validation.js';
+import { parseToolSelection, resolveSelectedTools } from '../utils/toolSelection.js';
 
 const { Enquirer } = enquirerPkg;
 
@@ -12,9 +13,19 @@ const { Enquirer } = enquirerPkg;
  * @param {string|undefined} params.limitArg
  * @param {string|undefined} params.timeoutArg
  * @param {string|undefined} params.standardArg
- * @returns {Promise<{ url: URL, limit: number, timeoutMs: number, standard: string }>}
+ * @param {boolean} [params.promptForTools=false]
+ * @param {string[]|undefined} [params.toolsArg]
+ * @returns {Promise<{ url: URL, limit: number, timeoutMs: number, standard: string, tools: string[] }>}
  */
-export async function getInputs({ interactive, urlArg, limitArg, timeoutArg, standardArg }) {
+export async function getInputs({
+  interactive,
+  urlArg,
+  limitArg,
+  timeoutArg,
+  standardArg,
+  promptForTools = false,
+  toolsArg,
+}) {
   if (!interactive) {
     const url = parseHttpUrl(urlArg || '');
     const limit = toBoundedInt(Number(limitArg ?? 5), { min: 1, max: 500, name: 'limit' });
@@ -24,7 +35,13 @@ export async function getInputs({ interactive, urlArg, limitArg, timeoutArg, sta
       name: 'timeout',
     });
 
-    return { url, limit, timeoutMs, standard: String(standardArg || 'WCAG2AA') };
+    return {
+      url,
+      limit,
+      timeoutMs,
+      standard: String(standardArg || 'WCAG2AA'),
+      tools: resolveSelectedTools(toolsArg),
+    };
   }
 
   const enquirer = new Enquirer();
@@ -91,6 +108,25 @@ export async function getInputs({ interactive, urlArg, limitArg, timeoutArg, sta
     },
   ];
 
+  if (promptForTools) {
+    prompts.push({
+      type: 'multiselect',
+      name: 'tools',
+      message: 'Scan tools:',
+      choices: [
+        { name: 'axe', message: 'axe', selected: true },
+        { name: 'lighthouse', message: 'lighthouse' },
+        { name: 'pa11y', message: 'pa11y' },
+      ],
+      validate: (value) => {
+        if (!Array.isArray(value) || value.length === 0) {
+          return 'Select at least one tool.';
+        }
+        return true;
+      },
+    });
+  }
+
   const answers = await enquirer.prompt(prompts);
 
   return {
@@ -102,6 +138,9 @@ export async function getInputs({ interactive, urlArg, limitArg, timeoutArg, sta
       name: 'timeout',
     }),
     standard: String(answers.standard || 'WCAG2AA'),
+    tools: promptForTools
+      ? parseToolSelection(answers.tools)
+      : resolveSelectedTools(toolsArg),
   };
 }
 

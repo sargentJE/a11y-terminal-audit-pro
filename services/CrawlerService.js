@@ -128,7 +128,52 @@ export class CrawlerService {
       }
     }
 
-    if (this.config.discoverCommonPaths) {
+    if (this.config.followNavigation) {
+      onMsg?.('Priming links from start page...');
+      const seedPage = await browser.newPage();
+      await seedPage.setCacheEnabled(true);
+      await seedPage.setViewport({ width: 1280, height: 800 });
+
+      try {
+        await seedPage.goto(start, { waitUntil: 'domcontentloaded', timeout: this.timeoutMs });
+        await seedPage.waitForNetworkIdle({ idleTime: 500, timeout: 8_000 }).catch(() => {});
+
+        const seedLinks = await extractLinksWithPriority(seedPage, this.config.pierceShadowDom);
+        const seenSeedCandidates = new Set();
+        const enqueueSeed = (href, priority) => {
+          const normalised = normaliseCrawlTarget(origin, href);
+          if (!normalised) return;
+
+          const candidate = toCanonical(normalised);
+          if (candidate === toCanonical(start)) return;
+          if (seenSeedCandidates.has(candidate)) return;
+          if (this.urlDepths.has(candidate)) return;
+          if (isBlocked(candidate)) return;
+          if (!passesPatterns(candidate)) return;
+
+          pushCandidate(queue, { url: candidate, priority, depth: 1 });
+          this.urlDepths.set(candidate, 1);
+          seenSeedCandidates.add(candidate);
+        };
+
+        for (const href of seedLinks.navigation || []) enqueueSeed(href, 2);
+        for (const href of seedLinks.regular || []) enqueueSeed(href, 3);
+
+        if (seenSeedCandidates.size > 0) {
+          onMsg?.(`Seeded ${seenSeedCandidates.size} links from start page`);
+        }
+      } catch (error) {
+        log.debug(`Seed link priming skipped for ${start}: ${error?.message || error}`);
+      } finally {
+        await seedPage.close().catch(() => {});
+      }
+    }
+
+    const shouldProbeCommonPaths =
+      this.config.discoverCommonPaths &&
+      (!this.config.followNavigation || queue.length < Math.max(4, this.limit / 2));
+
+    if (shouldProbeCommonPaths) {
       onMsg?.('Probing common page paths...');
       await probeCommonPaths({
         browser,

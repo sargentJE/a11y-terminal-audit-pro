@@ -11,6 +11,8 @@ A production-grade Node.js CLI tool for comprehensive web accessibility testing 
 a11y-audit-pro --url https://example.com --limit 10 --format html
 ```
 
+> Default scan tool is now `axe`. To run all legacy engines, use `--tool lighthouse,axe,pa11y`.
+
 Canonical user guide: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 ---
@@ -82,7 +84,7 @@ a11y-audit-pro --url https://example.com --format html
 a11y-audit-pro --url https://example.com --limit 20 --concurrency 3
 
 # CI mode with thresholds (exits with code 1 if thresholds exceeded)
-a11y-audit-pro --url https://example.com --max-critical 0 --min-score 80 --no-interactive
+a11y-audit-pro --url https://example.com --tool lighthouse,axe --max-critical 0 --min-score 80 --no-interactive
 
 # Generate all report formats
 a11y-audit-pro --url https://example.com --format json,html,csv,sarif
@@ -188,6 +190,7 @@ a11y-terminal-audit-pro/
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--url <url>` | Target URL (required unless interactive) | — |
+| `--tool <name[,name...]>` | Scan tools (repeatable): `lighthouse`, `axe`, `pa11y` | `axe` |
 | `--limit <n>` | Max pages to crawl | `5` |
 | `--timeout <ms>` | Per-tool timeout | `60000` |
 | `--standard <name>` | WCAG standard (see below) | `WCAG2AA` |
@@ -255,7 +258,7 @@ Exit code `1` if any threshold is exceeded:
 | `--max-violations <n>` | Fail if total violations exceed threshold |
 | `--max-critical <n>` | Fail if critical issues exceed threshold |
 | `--max-serious <n>` | Fail if serious issues exceed threshold |
-| `--min-score <n>` | Fail if Lighthouse score below threshold (0-100) |
+| `--min-score <n>` | Fail if Lighthouse score below threshold (0-100); requires `lighthouse` tool |
 | `--min-compliance <lvl>` | Fail if compliance below A/AA/AAA |
 
 ### Code Evidence Options
@@ -287,6 +290,7 @@ This creates `.a11yrc.json`:
   "limit": 10,
   "timeout": 60000,
   "standard": "WCAG2AA",
+  "tools": ["axe", "pa11y"],
   "details": true,
   "outDir": "./reports",
   "formats": ["json", "html"],
@@ -528,6 +532,7 @@ jobs:
         run: |
           npx a11y-audit-pro \
             --url ${{ env.DEPLOY_URL }} \
+            --tool lighthouse,axe,pa11y \
             --format json,html,sarif \
             --max-critical 0 \
             --min-score 80 \
@@ -567,6 +572,18 @@ accessibility-audit:
 |------|---------|
 | `0` | All thresholds passed |
 | `1` | One or more thresholds exceeded |
+
+---
+
+## Migration Notes
+
+- Breaking default: scans now run `axe` only unless `--tool` is provided.
+- Old all-engine behavior equivalent:
+  - `a11y-audit-pro --url https://example.com --tool lighthouse,axe,pa11y`
+- If you use `--min-score`, include Lighthouse explicitly in `--tool`.
+- Runtime warning behavior:
+  - When no explicit `--tool` or config `tools` is set, CLI prints a one-line migration warning.
+  - Suppress warning in CI by setting `A11Y_SUPPRESS_TOOL_DEFAULT_WARNING=1`.
 
 ---
 

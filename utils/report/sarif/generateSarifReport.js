@@ -51,11 +51,25 @@ export async function generateSarifReport(data, filepath) {
       region.snippet = { text: evidenceSnippet };
     }
 
+    const findingKind =
+      issue.findingKind || (issue.countsTowardCompliance === false ? 'manual-review' : 'violation');
+    const findingCertainty =
+      issue.findingCertainty || (findingKind === 'violation' ? 'confirmed' : 'manual-review');
+
     return {
       ruleId,
       ruleIndex: Array.from(rulesMap.keys()).indexOf(ruleId),
-      level: severityToLevel[issue.severityLabel] || 'warning',
+      level:
+        findingCertainty === 'inconclusive' || findingKind === 'manual-review'
+          ? 'note'
+          : severityToLevel[issue.severityLabel] || 'warning',
       message: { text: issue.message },
+      properties: {
+        findingKind,
+        findingCertainty,
+        countsTowardCompliance: issue.countsTowardCompliance !== false,
+        promotionPolicyVersion: issue.promotionPolicyVersion || null,
+      },
       locations: [
         {
           physicalLocation: {

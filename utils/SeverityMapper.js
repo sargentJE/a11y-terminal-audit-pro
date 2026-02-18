@@ -60,6 +60,25 @@ export class SeverityMapper {
   }
 
   /**
+   * @param {string} type
+   * @returns {{ findingKind: 'violation'|'manual-review', countsTowardCompliance: boolean }}
+   */
+  static pa11yFinding(type) {
+    if (type === 'error') {
+      return {
+        findingKind: 'violation',
+        countsTowardCompliance: true,
+        findingCertainty: 'confirmed',
+      };
+    }
+    return {
+      findingKind: 'manual-review',
+      countsTowardCompliance: false,
+      findingCertainty: 'manual-review',
+    };
+  }
+
+  /**
    * @param {number} weight
    * @returns {number}
    */
@@ -105,6 +124,10 @@ export class SeverityMapper {
       tool: 'axe',
       severity,
       severityLabel: SEVERITY_LABELS[severity],
+      findingKind: 'violation',
+      countsTowardCompliance: true,
+      findingCertainty: 'confirmed',
+      promotionPolicyVersion: null,
       message: violation.description || violation.help,
       selector: node.target?.join(' ') || node.html,
       html: node.html,
@@ -112,6 +135,10 @@ export class SeverityMapper {
       wcagCriteria,
       help: violation.help,
       helpUrl: violation.helpUrl,
+      engineMeta: {
+        ruleId: violation.id,
+        impact: violation.impact || null,
+      },
     }));
   }
 
@@ -122,6 +149,7 @@ export class SeverityMapper {
    */
   static normalizePa11yIssue(issue, url) {
     const severity = SeverityMapper.pa11ySeverity(issue.type);
+    const finding = SeverityMapper.pa11yFinding(issue.type);
     const wcagCriteria = SeverityMapper.getWcagForPa11yRule(issue.code);
 
     return {
@@ -129,6 +157,10 @@ export class SeverityMapper {
       tool: 'pa11y',
       severity,
       severityLabel: SEVERITY_LABELS[severity],
+      findingKind: finding.findingKind,
+      countsTowardCompliance: finding.countsTowardCompliance,
+      findingCertainty: finding.findingCertainty,
+      promotionPolicyVersion: null,
       message: issue.message,
       selector: issue.selector,
       html: issue.context,
@@ -136,6 +168,11 @@ export class SeverityMapper {
       wcagCriteria,
       help: issue.message,
       helpUrl: null,
+      engineMeta: {
+        ruleCode: issue.code || null,
+        type: issue.type || null,
+        typeCode: issue.typeCode ?? null,
+      },
     };
   }
 
@@ -156,6 +193,10 @@ export class SeverityMapper {
       tool: 'lighthouse',
       severity,
       severityLabel: SEVERITY_LABELS[severity],
+      findingKind: 'violation',
+      countsTowardCompliance: true,
+      findingCertainty: 'confirmed',
+      promotionPolicyVersion: null,
       message: audit.title || audit.description,
       selector: item.node?.selector || item.selector,
       html: item.node?.snippet || item.snippet,
@@ -163,6 +204,10 @@ export class SeverityMapper {
       wcagCriteria,
       help: audit.description,
       helpUrl: null,
+      engineMeta: {
+        auditId: audit.id,
+        weight,
+      },
     }));
   }
 
